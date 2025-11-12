@@ -1,0 +1,17 @@
+{
+  "name": "molek-cbt",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "workspaces": ["frontend", "backend"],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\""
+  },
+  "dependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
