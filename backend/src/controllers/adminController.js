@@ -3,22 +3,97 @@ const { hashPassword } = require('../services/authService');
 const { generatePassword, generateExamCode } = require('../services/codeGenerator');
 const { parseCsvBuffer } = require('../services/csvService');
 
+async function deleteStudentsByClass(req, res) {
+    let db;
+    try {
+        const { class: classLevel } = req.body;
+        if (!classLevel) {
+            return res.status(400).json({ error: 'Class required' });
+        }
+
+        db = getDb();
+        const stmt = db.prepare('DELETE FROM students WHERE class = ?');
+        const result = stmt.run(classLevel);
+
+        res.json({ deleted: result.changes, class: classLevel });
+    } catch (error) {
+        console.error('Delete class error:', error);
+        res.status(500).json({ error: 'Failed to delete students' });
+    } finally {
+        if (db) db.close();
+    }
+}
+
+function exportStudentsByClass(req, res) {
+    let db;
+    try {
+        const { class: classLevel } = req.query;
+        if (!classLevel) {
+            return res.status(400).json({ error: 'Class required' });
+        }
+
+        db = getDb();
+        const stmt = db.prepare(`
+      SELECT first_name, middle_name, last_name, student_id, exam_code, plain_password
+      FROM students WHERE class = ?
+      ORDER BY last_name, first_name
+    `);
+        const students = stmt.all(classLevel);
+
+        if (students.length === 0) {
+            return res.status(404).json({ error: 'No students found' });
+        }
+
+        // CSV format
+        const headers = ['First Name', 'Middle Name', 'Last Name', 'Student ID', 'Exam Code', 'Password'];
+        const csvRows = students.map(s => [
+            `"${s.first_name || ''}"`,
+            `"${s.middle_name || ''}"`,
+            `"${s.last_name || ''}"`,
+            `"${s.student_id || ''}"`,
+            `"${s.exam_code || ''}"`,
+            `"${s.plain_password || ''}"`
+        ]);
+
+        const csvContent = [headers, ...csvRows].map(row => row.join(',')).join('\n');
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename=students_${classLevel}_${Date.now()}.csv`);
+        res.send(csvContent);
+    } catch (error) {
+        console.error('Export students error:', error);
+        res.status(500).json({ error: 'Export failed' });
+    } finally {
+        if (db) db.close();
+    }
+}
+
+async function getClasses(req, res) {
+    let db;
+    try {
+        db = getDb();
+        const stmt = db.prepare(`
+      SELECT class, COUNT(*) as count 
+      FROM students 
+      GROUP BY class 
+      ORDER BY class
+    `);
+        const results = stmt.all();
+        res.json({ classes: results });
+    } catch (error) {
+        console.error('Get classes error:', error);
+        res.status(500).json({ error: 'Failed to fetch classes' });
+    } finally {
+        if (db) db.close();
+    }
+}
+
 async function createStudent(req, res) {
-    let db;  // For explicit close
+    let db;
     try {
         const { first_name, middle_name, last_name, class: classLevel, student_id } = req.body;
 
-        // 🔍 Log incoming request data
-        console.log('📥 CreateStudent - Incoming request:', {
-            first_name,
-            last_name,
-            class: classLevel,
-            middle_name: middle_name || 'N/A',
-            student_id: student_id || 'N/A'
-        });
-
         if (!first_name || !last_name || !classLevel) {
-            console.log('❌ CreateStudent - Validation failed: Missing required fields');
             return res.status(400).json({ error: 'First name, last name, and class are required' });
         }
 
@@ -26,72 +101,42 @@ async function createStudent(req, res) {
         const passwordHash = await hashPassword(password);
         const examCode = generateExamCode('GEN', classLevel, Date.now());
 
-        // 🔍 Log generated credentials
-        console.log('🔑 CreateStudent - Generated credentials:', {
-            password: password,
-            passwordHash: passwordHash ? `[HASHED - starts with ${passwordHash.substring(0, 5)}...]` : 'HASH FAILED!',
-            examCode
-        });
-
         db = getDb();
-        console.log('🔌 CreateStudent - DB connected, using better-sqlite3?');
 
         const stmt = db.prepare(`
-            INSERT INTO students (first_name, middle_name, last_name, class, student_id, exam_code, password_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `);
-        const insertResult = stmt.run(first_name, middle_name || '', last_name, classLevel, student_id || '', examCode, passwordHash);
+      INSERT INTO students (first_name, middle_name, last_name, class, student_id, exam_code, password_hash, plain_password)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+        const insertResult = stmt.run(first_name, middle_name || '', last_name, classLevel, student_id || '', examCode, passwordHash, password);
         const studentId = insertResult.lastInsertRowid;
 
-        console.log('✅ CreateStudent - INSERT succeeded:', {
-            changes: insertResult.changes,  // 1 row affected
-            lastId: studentId
-        });
-        // No finalize needed—optional in better-sqlite3
-
-        // 🔍 Re-fetch the inserted row to verify storage
-        const verifyStmt = db.prepare('SELECT * FROM students WHERE id = ?');
-        const storedStudent = verifyStmt.get(studentId);
-        console.log('🆕 CreateStudent - Stored in DB (re-fetched):', {
-            id: storedStudent ? storedStudent.id : 'INSERT FAILED!',
-            first_name: storedStudent ? storedStudent.first_name : 'N/A',
-            last_name: storedStudent ? storedStudent.last_name : 'N/A',
-            class: storedStudent ? storedStudent.class : 'N/A',
-            exam_code: storedStudent ? storedStudent.exam_code : 'N/A',
-            password_hash: storedStudent ? (storedStudent.password_hash ? `[STORED - starts with ${storedStudent.password_hash.substring(0, 5)}...]` : 'MISSING/NULL!') : 'ROW NOT FOUND!',
-            has_submitted: storedStudent ? storedStudent.has_submitted : 'N/A'
-        });
-        // No finalize needed here either
-
-        console.log('✅ CreateStudent - Success, returning response');
         res.status(201).json({
             id: studentId,
             exam_code: examCode,
             password: password
         });
     } catch (error) {
-        console.error('💥 CreateStudent - Error details:', error);
+        console.error('Create student error:', error);
         res.status(500).json({ error: 'Failed to create student' });
     } finally {
-        if (db) {
-            db.close();  // Always close connection (good practice)
-        }
+        if (db) db.close();
     }
 }
 
 async function bulkCreateStudents(req, res) {
+    let db;  // Declare outside try for finally access
     try {
         if (!req.file) {
             return res.status(400).json({ error: 'CSV file required' });
         }
 
         const studentsData = await parseCsvBuffer(req.file.buffer);
-        const db = getDb();
+        db = getDb();
         const createdStudents = [];
         let classLevel = '';
 
         for (const [index, row] of studentsData.entries()) {
-            const { first_name, last_name, class: cls, student_id } = row;
+            const { first_name, last_name, class: cls, student_id, middle_name = '' } = row;
             if (!first_name || !last_name || !cls) continue;
 
             const password = generatePassword();
@@ -99,17 +144,15 @@ async function bulkCreateStudents(req, res) {
             const examCode = generateExamCode('GEN', cls, Date.now() + index);
 
             const stmt = db.prepare(`
-        INSERT INTO students (first_name, middle_name, last_name, class, student_id, exam_code, password_hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO students (first_name, middle_name, last_name, class, student_id, exam_code, password_hash, plain_password)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
-            stmt.run(first_name, '', last_name, cls, student_id || '', examCode, passwordHash);
-            stmt.finalize();
+            stmt.run(first_name, middle_name, last_name, cls, student_id || '', examCode, passwordHash, password);
 
-            createdStudents.push({ full_name: `${first_name} ${last_name}`, class: cls, exam_code: examCode, password });
+            createdStudents.push({ full_name: `${first_name} ${middle_name} ${last_name}`.trim(), class: cls, exam_code: examCode, password });
             if (!classLevel) classLevel = cls;
         }
 
-        // Generate tabular text report
         const lines = [];
         lines.push('='.repeat(60));
         lines.push('STUDENT EXAM CREDENTIALS'.padStart(45));
@@ -119,25 +162,22 @@ async function bulkCreateStudents(req, res) {
         lines.push('NAME'.padEnd(20) + 'EXAM CODE'.padEnd(18) + 'PASSWORD');
         lines.push('-'.repeat(60));
 
-        createdStudents.forEach(s => {
-            lines.push(
-                s.full_name.padEnd(20).substring(0, 19) + ' ' +
-                s.exam_code.padEnd(18) +
-                s.password
-            );
+        createdStudents.forEach(student => {
+            const name = student.full_name.substring(0, 20);
+            lines.push(name.padEnd(20) + student.exam_code.padEnd(18) + student.password);
         });
 
         lines.push('='.repeat(60));
-        lines.push('Generated on: ' + new Date().toLocaleString());
-
         const txtContent = lines.join('\n');
 
         res.setHeader('Content-Type', 'text/plain');
-        res.setHeader('Content-Disposition', 'attachment; filename=student_credentials.txt');
+        res.setHeader('Content-Disposition', `attachment; filename=credentials_${classLevel}_${Date.now()}.txt`);
         res.send(txtContent);
     } catch (error) {
-        console.error('Bulk student error:', error);
-        res.status(500).json({ error: 'Student import failed' });
+        console.error('Bulk create error:', error);
+        res.status(500).json({ error: 'Bulk upload failed' });
+    } finally {
+        if (db) db.close();
     }
 }
 
@@ -361,4 +401,102 @@ function getAllQuestions(req, res) {
     }
 }
 
-module.exports = { createStudent, bulkCreateStudents, activateExam, getAllQuestions, getClassResults, uploadQuestions, exportClassResultsAsText };
+function getFilteredResults(req, res) {
+    let db;
+    try {
+        const { type, class: classLevel, subject, exam_code } = req.query;
+        if (!type || !['class', 'subject', 'exam_code'].includes(type)) {
+            return res.status(400).json({ error: 'Type required (class, subject, or exam_code)' });
+        }
+        if (type === 'class' && !classLevel) return res.status(400).json({ error: 'Class required' });
+        if (type === 'subject' && (!classLevel || !subject)) return res.status(400).json({ error: 'Class and subject required' });
+        if (type === 'exam_code' && !exam_code) return res.status(400).json({ error: 'Exam code required' });
+
+        db = getDb();
+        let query, params = [];
+
+        if (type === 'class') {
+            // All students in class, all their exams/submissions
+            query = `
+                SELECT s.first_name, s.middle_name, s.last_name, s.student_id, s.exam_code,
+                       sub.subject, sub.score, sub.total_questions, sub.submitted_at,
+                       CASE WHEN sub.id IS NULL THEN 'NOT TAKEN' ELSE 'COMPLETED' END as status
+                FROM students s
+                LEFT JOIN submissions sub ON s.id = sub.student_id
+                WHERE s.class = ?
+                ORDER BY s.last_name, s.first_name, sub.subject
+            `;
+            params = [classLevel];
+        } else if (type === 'subject') {
+            // All students in class for specific subject
+            query = `
+                SELECT s.first_name, s.middle_name, s.last_name, s.student_id, s.exam_code,
+                       sub.subject, sub.score, sub.total_questions, sub.submitted_at,
+                       CASE WHEN sub.id IS NULL THEN 'NOT TAKEN' ELSE 'COMPLETED' END as status
+                FROM students s
+                LEFT JOIN submissions sub ON s.id = sub.student_id AND sub.subject = ?
+                WHERE s.class = ?
+                ORDER BY s.last_name, s.first_name
+            `;
+            params = [subject, classLevel];
+        } else {  // exam_code
+            // One student's all exams/submissions
+            query = `
+                SELECT s.first_name, s.middle_name, s.last_name, s.student_id, s.exam_code,
+                       sub.subject, sub.score, sub.total_questions, sub.submitted_at,
+                       CASE WHEN sub.id IS NULL THEN 'NOT TAKEN' ELSE 'COMPLETED' END as status
+                FROM students s
+                LEFT JOIN submissions sub ON s.id = sub.student_id
+                WHERE s.exam_code = ?
+                ORDER BY sub.subject, sub.submitted_at
+            `;
+            params = [exam_code];
+        }
+
+        const stmt = db.prepare(query);
+        const rows = stmt.all(...params);
+        // No finalize
+
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'No results found' });
+        }
+
+        // Format as TXT lines for download
+        const lines = [];
+        const title = `${type.toUpperCase()} RESULTS - ${new Date().toLocaleString()}`;
+        lines.push('='.repeat(80));
+        lines.push(title.padStart(40 + title.length / 2));
+        lines.push('='.repeat(80));
+        lines.push('NAME'.padEnd(25) + 'EXAM CODE'.padEnd(15) + 'SUBJECT'.padEnd(12) + 'SCORE'.padEnd(10) + 'STATUS'.padEnd(12));
+        lines.push('-'.repeat(80));
+
+        rows.forEach(row => {
+            const fullName = `${row.first_name} ${row.middle_name || ''} ${row.last_name}`.trim().substring(0, 24);
+            const code = row.exam_code || 'N/A';
+            const sub = row.subject || 'N/A';
+            const score = row.score ? `${row.score}/${row.total_questions}` : 'NOT TAKEN';
+            const status = row.status || 'NOT TAKEN';
+            lines.push(
+                fullName.padEnd(25) +
+                code.padEnd(15) +
+                sub.padEnd(12) +
+                score.padEnd(10) +
+                status
+            );
+        });
+
+        lines.push('='.repeat(80));
+
+        const txtContent = lines.join('\n');
+        res.setHeader('Content-Type', 'text/plain');
+        res.setHeader('Content-Disposition', `attachment; filename=results_${type}_${classLevel || exam_code || subject}_${Date.now()}.txt`);
+        res.send(txtContent);
+    } catch (error) {
+        console.error('💥 getFilteredResults - Error details:', error);
+        res.status(500).json({ error: 'Results fetch failed' });
+    } finally {
+        if (db) db.close();
+    }
+}
+
+module.exports = { deleteStudentsByClass, exportStudentsByClass, getClasses, createStudent, bulkCreateStudents, activateExam, getFilteredResults, getAllQuestions, getClassResults, uploadQuestions, exportClassResultsAsText };

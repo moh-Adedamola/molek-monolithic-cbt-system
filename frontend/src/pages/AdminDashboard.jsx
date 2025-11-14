@@ -1,4 +1,3 @@
-// frontend/src/pages/AdminDashboard.jsx
 import { useState, useEffect } from 'react';
 import { Download, Plus, Eye, ToggleLeft, ToggleRight, ChevronDown, ChevronUp } from 'lucide-react';
 import {
@@ -8,7 +7,8 @@ import {
     uploadQuestions,
     exportClassResultsAsText,
     activateExam,
-    getAllQuestions
+    getAllQuestions,
+    getFilteredResults
 } from '../services/api';
 
 const downloadBlob = (blob, filename) => {
@@ -20,6 +20,14 @@ const downloadBlob = (blob, filename) => {
     a.click();
     window.URL.revokeObjectURL(url);
     document.body.removeChild(a);
+};
+
+const isValidFilter = (filter) => {
+    if (!filter.type) return false;
+    if (filter.type === 'class' && filter.class) return true;
+    if (filter.type === 'subject' && filter.class && filter.subject) return true;
+    if (filter.type === 'exam_code' && filter.exam_code) return true;
+    return false;
 };
 
 export default function AdminDashboard() {
@@ -36,17 +44,18 @@ export default function AdminDashboard() {
     });
 
     // === QUESTIONS ===
-    // CSV Upload State
     const [csvQuestionMeta, setCsvQuestionMeta] = useState({ subject: '', class: '' });
-
-    // Manual Entry State
     const [manualQuestionMeta, setManualQuestionMeta] = useState({ subject: '', class: '' });
     const [questions, setQuestions] = useState([{ text: '', a: '', b: '', c: '', d: '', correct: 'A' }]);
 
-    // New: Questions List State (grouped by exam)
-    const [examGroups, setExamGroups] = useState({});  // { `${subject}-${class}`: { subject, class, is_active, questions: [] } }
+    // Questions List State
+    const [examGroups, setExamGroups] = useState({});
     const [questionsLoading, setQuestionsLoading] = useState(false);
-    const [expandedExams, setExpandedExams] = useState(new Set());  // For accordion
+    const [expandedExams, setExpandedExams] = useState(new Set());
+
+    // === RESULTS FILTER ===
+    const [resultsFilter, setResultsFilter] = useState({ type: '', class: '', subject: '', exam_code: '' });
+    const [resultsLoading, setResultsLoading] = useState(false);
 
     // === STUDENT HANDLERS ===
     const handleManualStudent = async (e) => {
@@ -96,7 +105,6 @@ export default function AdminDashboard() {
             alert('Questions saved!');
             setManualQuestionMeta({ subject: '', class: '' });
             setQuestions([{ text: '', a: '', b: '', c: '', d: '', correct: 'A' }]);
-            // Refresh questions list
             fetchAllQuestions();
         } catch (err) {
             alert('Failed: ' + (err.response?.data?.error || 'Unknown error'));
@@ -114,7 +122,6 @@ export default function AdminDashboard() {
             await uploadQuestions(file, csvQuestionMeta.subject, csvQuestionMeta.class);
             alert('Questions uploaded!');
             setCsvQuestionMeta({ subject: '', class: '' });
-            // Refresh questions list
             fetchAllQuestions();
         } catch {
             alert('Upload failed');
@@ -122,7 +129,7 @@ export default function AdminDashboard() {
         setLoading(false);
     };
 
-    // New: Fetch and group all questions by exam (subject + class)
+    // === QUESTIONS FETCH & TOGGLE ===
     const fetchAllQuestions = async () => {
         setQuestionsLoading(true);
         try {
@@ -131,12 +138,12 @@ export default function AdminDashboard() {
             const groups = {};
             rawQuestions.forEach(q => {
                 const safeSubject = q.subject || 'Unknown';
-                const safeClass = q.class || 'Unknown';  // Fallback if CSV/DB null
+                const safeClass = q.class || 'Unknown';
                 const key = `${safeSubject}-${safeClass}`;
                 if (!groups[key]) {
                     groups[key] = {
                         subject: safeSubject,
-                        class: safeClass,  // Now safe
+                        class: safeClass,
                         is_active: q.is_active || false,
                         questions: []
                     };
@@ -152,7 +159,6 @@ export default function AdminDashboard() {
                 });
             });
             setExamGroups(groups);
-            console.log('Grouped exams:', Object.keys(groups).length);
         } catch (err) {
             console.error('Failed to fetch questions:', err);
             alert('Failed to load questions');
@@ -161,9 +167,7 @@ export default function AdminDashboard() {
         setQuestionsLoading(false);
     };
 
-    // New: Toggle exam active status (for entire subject/class)
     const handleToggleExam = async (subject, classLevel, currentActive) => {
-        console.log('🔍 Frontend Toggle Call:', { subject, classLevel, currentActive });  // Debug log
         if (!subject || !classLevel || subject === 'Unknown' || classLevel === 'Unknown') {
             alert('Invalid exam details (missing subject/class). Please re-upload questions.');
             return;
@@ -173,14 +177,14 @@ export default function AdminDashboard() {
         try {
             await activateExam(subject, classLevel, !currentActive);
             alert('Exam status updated!');
-            fetchAllQuestions();  // Refresh
+            fetchAllQuestions();
         } catch (err) {
-            console.error('Toggle Error:', err);  // Log full error
+            console.error('Toggle Error:', err);
             alert('Failed to update: ' + (err.response?.data?.error || err.message || 'Unknown error'));
         }
         setLoading(false);
     };
-    // New: Toggle exam expansion
+
     const toggleExamExpansion = (key) => {
         const newExpanded = new Set(expandedExams);
         if (newExpanded.has(key)) {
@@ -191,25 +195,39 @@ export default function AdminDashboard() {
         setExpandedExams(newExpanded);
     };
 
-    // Fetch questions on tab switch
+    // === RESULTS HANDLERS ===
+    const handleExportResults = async () => {
+        if (!isValidFilter(resultsFilter)) {
+            alert('Please fill all required fields for the selected filter type.');
+            return;
+        }
+
+        setResultsLoading(true);
+        try {
+            const res = await getFilteredResults(resultsFilter);
+            const { type, class: classLevel, subject, exam_code } = resultsFilter;
+            let filename = 'results.txt';
+            if (type === 'class') {
+                filename = `${classLevel}_all_results.txt`;
+            } else if (type === 'subject') {
+                filename = `${classLevel}_${subject}_results.txt`;
+            } else if (type === 'exam_code') {
+                filename = `student_${exam_code}_results.txt`;
+            }
+            downloadBlob(res.data, filename);
+        } catch (err) {
+            console.error('Export error:', err);
+            alert('Failed to export results: ' + (err.response?.data?.error || 'Unknown error'));
+        }
+        setResultsLoading(false);
+    };
+
+    // === EFFECTS ===
     useEffect(() => {
         if (activeTab === 'questions') {
             fetchAllQuestions();
         }
     }, [activeTab]);
-
-    // === RESULTS ===
-    const exportResults = async () => {
-        const classLevel = prompt('Enter class (e.g., JSS1)');
-        const subject = prompt('Enter subject (e.g., English)');
-        if (!classLevel || !subject) return;
-        try {
-            const res = await exportClassResultsAsText(classLevel, subject);
-            downloadBlob(res.data, `${classLevel}_${subject}_results.txt`);
-        } catch {
-            alert('Failed to export results');
-        }
-    };
 
     return (
         <div className="space-y-6 max-w-7xl mx-auto px-4 py-6">
@@ -241,7 +259,6 @@ export default function AdminDashboard() {
             {/* STUDENTS TAB */}
             {activeTab === 'students' && (
                 <div className="space-y-8">
-                    {/* Manual Student */}
                     <div className="bg-white shadow rounded-lg p-6">
                         <h2 className="text-lg font-bold text-gray-800 mb-4">Add Single Student</h2>
                         <form onSubmit={handleManualStudent} className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -288,7 +305,6 @@ export default function AdminDashboard() {
                         </form>
                     </div>
 
-                    {/* Bulk Upload */}
                     <div className="bg-white shadow rounded-lg p-6">
                         <h2 className="text-lg font-bold text-gray-800 mb-4">Bulk Upload Students (CSV)</h2>
                         <div className="mb-3">
@@ -324,7 +340,6 @@ export default function AdminDashboard() {
             {/* QUESTIONS TAB */}
             {activeTab === 'questions' && (
                 <div className="space-y-8">
-                    {/* CSV Upload */}
                     <div className="bg-white shadow rounded-lg p-6">
                         <h2 className="text-lg font-bold text-gray-800 mb-4">Upload Questions (CSV)</h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -371,7 +386,6 @@ export default function AdminDashboard() {
                         </p>
                     </div>
 
-                    {/* Manual Entry */}
                     <div className="bg-white shadow rounded-lg p-6">
                         <h2 className="text-lg font-bold text-gray-800 mb-4">Add Questions Manually</h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -458,7 +472,6 @@ export default function AdminDashboard() {
                         </button>
                     </div>
 
-                    {/* Updated: Exam Groups List (grouped by subject/class, one toggle per exam) */}
                     <div className="bg-white shadow rounded-lg p-6">
                         <h2 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
                             <Eye size={20} /> Exam Bank (Questions by Subject/Class)
@@ -474,28 +487,27 @@ export default function AdminDashboard() {
                                     const isExpanded = expandedExams.has(key);
                                     return (
                                         <div key={key} className="border rounded-lg overflow-hidden">
-                                            {/* Exam Header Row */}
                                             <div
                                                 className="bg-gray-50 px-6 py-4 cursor-pointer flex justify-between items-center"
                                                 onClick={() => toggleExamExpansion(key)}
                                             >
                                                 <div className="flex items-center gap-4">
-                                                    <span className="text-sm font-medium text-gray-900">
-                                                        {group.subject} / {group.class}
-                                                    </span>
+                          <span className="text-sm font-medium text-gray-900">
+                            {group.subject} / {group.class}
+                          </span>
                                                     <span className="text-xs text-gray-500">
-                                                        {group.questions.length} questions
-                                                    </span>
+                            {group.questions.length} questions
+                          </span>
                                                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                                                         group.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
                                                     }`}>
-                                                        {group.is_active ? 'Active' : 'Inactive'}
-                                                    </span>
+                            {group.is_active ? 'Active' : 'Inactive'}
+                          </span>
                                                 </div>
                                                 <div className="flex items-center gap-2">
                                                     <button
                                                         onClick={(e) => {
-                                                            e.stopPropagation();  // Prevent expand
+                                                            e.stopPropagation();
                                                             handleToggleExam(group.subject, group.class, group.is_active);
                                                         }}
                                                         disabled={loading}
@@ -513,7 +525,6 @@ export default function AdminDashboard() {
                                                 </div>
                                             </div>
 
-                                            {/* Expandable Questions List */}
                                             {isExpanded && (
                                                 <div className="divide-y divide-gray-200">
                                                     {group.questions.map((q, idx) => (
@@ -546,14 +557,85 @@ export default function AdminDashboard() {
             {activeTab === 'results' && (
                 <div className="space-y-6">
                     <div className="bg-white shadow rounded-lg p-6">
-                        <h2 className="text-lg font-medium mb-4">Export Class Results</h2>
-                        <button
-                            onClick={exportResults}
-                            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded"
-                        >
-                            <Download size={16} /> Download Results (.txt)
-                        </button>
-                        <p className="mt-2 text-sm text-gray-600">You will be prompted for class and subject.</p>
+                        <h2 className="text-lg font-medium mb-4">Export Filtered Results</h2>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Filter Type</label>
+                                <select
+                                    value={resultsFilter.type}
+                                    onChange={(e) => setResultsFilter({ type: e.target.value, class: '', subject: '', exam_code: '' })}
+                                    className="w-full border rounded p-2"
+                                >
+                                    <option value="">Select filter type</option>
+                                    <option value="class">By Class (All Subjects)</option>
+                                    <option value="subject">By Class & Subject</option>
+                                    <option value="exam_code">By Student Exam Code</option>
+                                </select>
+                            </div>
+
+                            {resultsFilter.type === 'class' && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Class</label>
+                                    <input
+                                        type="text"
+                                        value={resultsFilter.class}
+                                        onChange={(e) => setResultsFilter({ ...resultsFilter, class: e.target.value })}
+                                        placeholder="e.g., JSS1"
+                                        className="w-full border rounded p-2"
+                                    />
+                                </div>
+                            )}
+
+                            {resultsFilter.type === 'subject' && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Class</label>
+                                        <input
+                                            type="text"
+                                            value={resultsFilter.class}
+                                            onChange={(e) => setResultsFilter({ ...resultsFilter, class: e.target.value })}
+                                            placeholder="e.g., JSS1"
+                                            className="w-full border rounded p-2"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
+                                        <input
+                                            type="text"
+                                            value={resultsFilter.subject}
+                                            onChange={(e) => setResultsFilter({ ...resultsFilter, subject: e.target.value })}
+                                            placeholder="e.g., English"
+                                            className="w-full border rounded p-2"
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            {resultsFilter.type === 'exam_code' && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Student Exam Code</label>
+                                    <input
+                                        type="text"
+                                        value={resultsFilter.exam_code}
+                                        onChange={(e) => setResultsFilter({ ...resultsFilter, exam_code: e.target.value })}
+                                        placeholder="e.g., EX-JSS1-001A"
+                                        className="w-full border rounded p-2"
+                                    />
+                                </div>
+                            )}
+
+                            <button
+                                onClick={handleExportResults}
+                                disabled={resultsLoading || !isValidFilter(resultsFilter)}
+                                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded disabled:opacity-50"
+                            >
+                                <Download size={16} />
+                                {resultsLoading ? 'Exporting...' : 'Download Results (.txt)'}
+                            </button>
+                        </div>
+                        <p className="mt-2 text-sm text-gray-600">
+                            Results will be downloaded as a formatted text file for printing.
+                        </p>
                     </div>
                 </div>
             )}

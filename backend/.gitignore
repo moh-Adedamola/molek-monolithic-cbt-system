@@ -1,2 +1,3 @@
 ../.idea
 backend/src/node_modules
+backend/src/cbt.db

@@ -55,7 +55,10 @@ export default function ExamSelect() {
                 {exams.map((exam, index) => (
                     <button
                         key={exam.subject || index}  // Fixed: Use exam.subject as key (string)
-                        onClick={() => navigate(`/exam/${exam.subject}`)}
+                        onClick={() => {
+                            localStorage.setItem('examDuration', exam.duration_minutes);
+                            navigate(`/exam/${exam.subject}`);
+                        }}
                         className="block w-full py-3 px-6 bg-white border border-gray-300 rounded-md shadow-sm text-left font-medium text-gray-700 hover:bg-gray-50 transition-colors"
                     >
                         <div className="flex justify-between items-center">

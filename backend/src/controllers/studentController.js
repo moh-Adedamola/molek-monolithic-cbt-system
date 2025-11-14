@@ -33,7 +33,7 @@ async function studentLogin(req, res) {
             class: student ? student.class : 'N/A',
             exam_code_stored: student ? student.exam_code : 'N/A',
             password_hash: student ? (student.password_hash ? `[STORED - starts with ${student.password_hash.substring(0, 5)}...]` : 'MISSING/NULL!') : 'N/A',
-            has_submitted: student ? student.has_submitted : 'N/A'
+            has_submitted: student ? student.has_submitted : 'N/A'  // Legacy, ignored now
         });
 
         if (!student) {
@@ -51,11 +51,6 @@ async function studentLogin(req, res) {
             return res.status(500).json({ error: 'Student record missing password hash' });
         }
 
-        if (student.has_submitted) {
-            console.log('🚫 StudentLogin - Already submitted:', { exam_code, student_id: student.id });
-            return res.status(403).json({ error: 'Exam already submitted' });
-        }
-
         // 🔍 Debug log before password verification
         console.log('🔐 StudentLogin - Verifying password:', {
             exam_code,
@@ -69,21 +64,25 @@ async function studentLogin(req, res) {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
-        const examStmt = db.prepare(
-            'SELECT subject, duration_minutes FROM exams WHERE class = ? AND is_active = 1'
-        );
-        const activeExams = examStmt.all(student.class);
+        // Updated: Active untaken exams (per-subject check)
+        const examStmt = db.prepare(`
+            SELECT e.subject, e.duration_minutes
+            FROM exams e
+            LEFT JOIN submissions sub ON sub.student_id = ? AND sub.subject = e.subject
+            WHERE e.class = ? AND e.is_active = 1 AND sub.id IS NULL  // Untaken subjects only
+        `);
+        const activeExams = examStmt.all(student.id, student.class);
         // No finalize
 
-        console.log('📋 StudentLogin - Active exams for class:', {
+        console.log('📋 StudentLogin - Active untaken exams for class:', {
             class: student.class,
             num_exams: activeExams.length,
             exams: activeExams.map(e => ({ subject: e.subject, duration: e.duration_minutes }))
         });
 
         if (activeExams.length === 0) {
-            console.log('⚠️ StudentLogin - No active exams for class:', student.class);
-            return res.status(404).json({ error: 'No active exams' });
+            console.log('⚠️ StudentLogin - No active untaken exams for class:', student.class);
+            return res.status(404).json({ error: 'No active untaken exams' });
         }
 
         const fullName = `${student.first_name} ${student.middle_name || ''} ${student.last_name}`.trim();
@@ -115,28 +114,28 @@ function getExamQuestions(req, res) {
         db = getDb();
         console.log('📥 getExamQuestions - Request:', { subject, exam_code });
 
-        // Sync: Get student + access check
+        // Updated: Access check per-subject (untaken)
         const studentStmt = db.prepare(`
-            SELECT s.class, s.has_submitted
+            SELECT s.class
             FROM students s
                      JOIN exams e ON s.class = e.class
-            WHERE s.exam_code = ? AND e.subject = ? AND e.is_active = 1
+                     LEFT JOIN submissions sub ON sub.student_id = s.id AND sub.subject = e.subject
+            WHERE s.exam_code = ? AND e.subject = ? AND e.is_active = 1 AND sub.id IS NULL
         `);
         const student = studentStmt.get(exam_code, subject);
         // No finalize
 
         console.log('🔍 getExamQuestions - Student access:', {
             found: !!student,
-            class: student ? student.class : 'N/A',
-            has_submitted: student ? student.has_submitted : 'N/A'
+            class: student ? student.class : 'N/A'
         });
 
-        if (!student || student.has_submitted) {
-            console.log('🚫 getExamQuestions - Access denied');
-            return res.status(403).json({ error: 'Access denied' });
+        if (!student) {
+            console.log('🚫 getExamQuestions - Access denied or already submitted for subject');
+            return res.status(403).json({ error: 'Access denied or already submitted for this subject' });
         }
 
-        // Sync: Get questions (FIX: Qualify q.id to avoid ambiguity with e.id)
+        // Sync: Get questions
         const questionsStmt = db.prepare(`
             SELECT q.id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d
             FROM questions q
@@ -160,55 +159,58 @@ function getExamQuestions(req, res) {
 async function submitExam(req, res) {
     let db;
     try {
-        const {exam_code, answers} = req.body;
-        if (!exam_code || !answers) {
-            return res.status(400).json({error: 'exam_code and answers required'});
+        const {exam_code, answers, subject} = req.body;  // New: Require subject
+        if (!exam_code || !answers || !subject) {
+            return res.status(400).json({error: 'exam_code, answers, and subject required'});
         }
 
         db = getDb();
-        console.log('📥 submitExam - Request:', {exam_code, numAnswers: Object.keys(answers).length});
+        console.log('📥 submitExam - Request:', {exam_code, subject, numAnswers: Object.keys(answers).length});
 
-        // Sync: Get student (not submitted)
-        const studentStmt = db.prepare('SELECT id, class FROM students WHERE exam_code = ? AND has_submitted = 0');
-        const student = studentStmt.get(exam_code);
+        // Updated: Check not submitted for this subject
+        const studentStmt = db.prepare(`
+            SELECT id, class
+            FROM students s
+                     LEFT JOIN submissions sub ON sub.student_id = s.id AND sub.subject = ?
+            WHERE s.exam_code = ?
+              AND sub.id IS NULL
+        `);
+        const student = studentStmt.get(subject, exam_code);
         // No finalize
 
         if (!student) {
-            console.log('🚫 submitExam - Invalid or already submitted');
-            return res.status(403).json({error: 'Invalid or already submitted'});
+            console.log('🚫 submitExam - Invalid or already submitted for subject');
+            return res.status(403).json({error: 'Invalid or already submitted for this subject'});
         }
 
         console.log('🔍 submitExam - Student OK:', {id: student.id, class: student.class});
 
-        // Sync: Get active exam subject
-        const examStmt = db.prepare('SELECT subject FROM exams WHERE class = ? AND is_active = 1');
-        const exam = examStmt.get(student.class);
+        // Get active exam (verify subject matches)
+        const examStmt = db.prepare('SELECT subject FROM exams WHERE class = ? AND subject = ? AND is_active = 1');
+        const exam = examStmt.get(student.class, subject);
         // No finalize
 
         if (!exam) {
-            console.log('⚠️ submitExam - No active exam');
-            return res.status(400).json({error: 'No active exam'});
+            console.log('⚠️ submitExam - No active exam for subject');
+            return res.status(400).json({error: 'No active exam for this subject'});
         }
 
         console.log('📋 submitExam - Grading for subject:', exam.subject);
 
-        // Grade (async service, but non-DB)
+        // Grade
         const correctAnswers = await getCorrectAnswers(exam.subject, student.class);
         const total = Object.keys(correctAnswers).length;
         const score = gradeExam(answers, correctAnswers);
 
-        // Sync: Insert submission
+        // Insert with subject
         const subStmt = db.prepare(`
-            INSERT INTO submissions (student_id, answers, score, total_questions)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO submissions (student_id, subject, answers, score, total_questions)
+            VALUES (?, ?, ?, ?, ?)
         `);
-        subStmt.run(student.id, JSON.stringify(answers), score, total);
+        subStmt.run(student.id, exam.subject, JSON.stringify(answers), score, total);
         // No finalize
 
-        // Sync: Mark as submitted
-        const updateStmt = db.prepare('UPDATE students SET has_submitted = 1 WHERE id = ?');
-        const updateResult = updateStmt.run(student.id);
-        console.log('✅ submitExam - Submission saved:', {score, total, updatedRows: updateResult.changes});
+        console.log('✅ submitExam - Submission saved:', {score, total});
 
         const percentage = total ? Math.round((score / total) * 100) : 0;
         res.json({score, total, percentage});

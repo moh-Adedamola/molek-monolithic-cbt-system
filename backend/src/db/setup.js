@@ -52,16 +52,16 @@ function initDB() {
         `);
 
         // Submissions table
-        db.exec(`
-            CREATE TABLE IF NOT EXISTS submissions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                student_id INTEGER NOT NULL,
-                answers TEXT NOT NULL,
-                score INTEGER NOT NULL,
-                total_questions INTEGER NOT NULL,
-                submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
-            )
+        db.exec(`CREATE TABLE IF NOT EXISTS submissions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        student_id INTEGER NOT NULL,
+                        subject TEXT NOT NULL,
+                        answers TEXT NOT NULL,
+                        score INTEGER NOT NULL,
+                        total_questions INTEGER NOT NULL,
+                        submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
+                )
         `);
 
         console.log('✅ Database ready: cbt.db (using better-sqlite3)');

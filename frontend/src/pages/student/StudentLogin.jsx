@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { studentLogin } from '../services/api';
+import { studentLogin } from '../../services/api';
 import { useNavigate } from 'react-router-dom';
 
 export default function StudentLogin() {
