@@ -1,427 +1,285 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Download, Eye } from 'lucide-react';
+import { Download, FileText, Filter } from 'lucide-react';
 import Table from '../../components/common/Table';
 import Button from '../../components/common/Button';
-import Alert from '../../components/common/Alert';
 import Card from '../../components/common/Card';
 import Select from '../../components/common/Select';
-import Input from '../../components/common/Input';
-import Modal from '../../components/common/Modal';
+import Alert from '../../components/common/Alert';
 import Badge from '../../components/common/Badge';
-import ConfirmDialog from '../../components/common/ConfirmDialog';
-import { resultService } from '../../services/services';
-import { downloadBlob, isValidFilter } from '../../utils/adminUtils';
+import { getClasses, getClassResults, exportClassResultsAsText, getFilteredResults, getSubjects } from '../../services/api';
+import { downloadBlob } from '../../utils/adminUtils';
+
+const CLASS_LEVELS = ['JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3'];
 
 const ResultsManagement = () => {
-    const [searchParams] = useSearchParams();
-    const examIdFromUrl = searchParams.get('exam');
-
     const [results, setResults] = useState([]);
+    const [classes, setClasses] = useState([]);
+    const [subjectsByClass, setSubjectsByClass] = useState({});
     const [loading, setLoading] = useState(true);
     const [alert, setAlert] = useState(null);
-    const [selectedResult, setSelectedResult] = useState(null);
-    const [isDetailsModalOpen, setIsDetailsModalOpen] = useState(false);
-    const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
-    const [submitting, setSubmitting] = useState(false);
-
-    // Filter state for exports
-    const [exportFilter, setExportFilter] = useState({
-        type: '',
+    const [filters, setFilters] = useState({
         class: '',
         subject: '',
-        exam_code: ''
     });
-    const [exporting, setExporting] = useState(false);
-
-    // Filter state for table
-    const [filters, setFilters] = useState({
-        exam_id: examIdFromUrl || '',
-        student_id: '',
-        status: '',
-        search: '',
-    });
-
-    // Stats
-    const [stats, setStats] = useState({
-        total: 0,
-        published: 0,
-        pending: 0,
-        averageScore: 0,
-        passRate: 0,
-    });
+    const [availableSubjects, setAvailableSubjects] = useState([]);
 
     useEffect(() => {
-        loadResults();
-    }, [filters]);
+        loadClasses();
+        loadSubjects();
+    }, []);
+
+    useEffect(() => {
+        if (filters.class) {
+            loadResults();
+            if (subjectsByClass[filters.class]) {
+                setAvailableSubjects(subjectsByClass[filters.class]);
+            } else {
+                setAvailableSubjects([]);
+            }
+        }
+    }, [filters.class]);
+
+    const loadClasses = async () => {
+        try {
+            const response = await getClasses();
+            let classList = response.data.classes || [];
+            if (classList.length > 0 && typeof classList[0] === 'string') {
+                classList = classList.map(cls => ({ class: cls, count: '?' }));
+            }
+            setClasses(classList);
+        } catch (error) {
+            console.error('Load classes error:', error);
+        }
+    };
+
+    const loadSubjects = async () => {
+        try {
+            const response = await getSubjects();
+            setSubjectsByClass(response.data?.subjects || {});
+        } catch (error) {
+            console.error('Failed to load subjects:', error);
+        }
+    };
 
     const loadResults = async () => {
+        if (!filters.class) return;
+
         try {
             setLoading(true);
-            const params = { ...filters };
-            const response = await resultService.getAll(params);
-            const resultsList = response.data?.results || response.data || [];
-            setResults(resultsList);
+            const response = await getClassResults(filters.class);
+            let resultList = response.data?.results || [];
 
-            // Calculate stats
-            const published = resultsList.filter(r => r.is_published || r.isPublished).length;
-            const totalScore = resultsList.reduce((sum, r) => {
-                const score = r.percentage_score || r.percentageScore || r.score || 0;
-                return sum + score;
-            }, 0);
-            const avgScore = resultsList.length > 0 ? totalScore / resultsList.length : 0;
-            const passRate = resultsList.length > 0 ? (published / resultsList.length * 100) : 0;
+            // Filter by subject if selected
+            if (filters.subject) {
+                resultList = resultList.filter(r => r.subject === filters.subject);
+            }
 
-            setStats({
-                total: resultsList.length,
-                published,
-                pending: resultsList.length - published,
-                averageScore: avgScore,
-                passRate
-            });
+            setResults(resultList);
         } catch (error) {
-            setAlert({
-                type: 'error',
-                message: error.response?.data?.error || error.message || 'Failed to load results'
-            });
+            showAlert('error', error.message || 'Failed to load results');
+            setResults([]);
         } finally {
             setLoading(false);
         }
     };
 
-    const handleExportResults = async () => {
-        if (!isValidFilter(exportFilter)) {
-            setAlert({
-                type: 'error',
-                message: 'Please fill all required fields for the selected filter type.'
-            });
+    const showAlert = (type, message) => {
+        setAlert({ type, message });
+    };
+
+    const handleExportText = async () => {
+        if (!filters.class || !filters.subject) {
+            showAlert('error', 'Please select both class and subject');
             return;
         }
 
-        setExporting(true);
         try {
-            const response = await resultService.getFiltered(exportFilter);
-            const { type, class: classLevel, subject, exam_code } = exportFilter;
-
-            let filename = 'results.txt';
-            if (type === 'class') filename = `${classLevel}_all_results.txt`;
-            else if (type === 'subject') filename = `${classLevel}_${subject}_results.txt`;
-            else if (type === 'exam_code') filename = `student_${exam_code}_results.txt`;
-
-            downloadBlob(response.data, filename);
-            setAlert({ type: 'success', message: 'Results exported successfully' });
+            const response = await exportClassResultsAsText(filters.class, filters.subject);
+            downloadBlob(response.data, `${filters.class}_${filters.subject}_results.txt`);
+            showAlert('success', 'Results exported successfully');
         } catch (error) {
-            setAlert({
-                type: 'error',
-                message: error.response?.data?.error || 'Failed to export results'
-            });
-        } finally {
-            setExporting(false);
+            showAlert('error', 'Failed to export results');
         }
     };
 
-    const handleViewDetails = (result) => {
-        setSelectedResult(result);
-        setIsDetailsModalOpen(true);
-    };
-
-    const handlePublishClick = (result) => {
-        setSelectedResult(result);
-        setIsPublishDialogOpen(true);
-    };
-
-    const handlePublishConfirm = async () => {
+    const handleExportCSV = async () => {
         try {
-            setSubmitting(true);
-            await resultService.publish(selectedResult.id || selectedResult.result_id);
-            setAlert({ type: 'success', message: 'Result published successfully' });
-            setIsPublishDialogOpen(false);
-            setSelectedResult(null);
-            loadResults();
+            const response = await getFilteredResults(filters);
+            downloadBlob(response.data, 'filtered_results.csv');
+            showAlert('success', 'CSV exported successfully');
         } catch (error) {
-            setAlert({
-                type: 'error',
-                message: error.response?.data?.error || 'Failed to publish result'
-            });
-        } finally {
-            setSubmitting(false);
+            showAlert('error', 'Failed to export CSV');
         }
     };
 
-    const handleDownloadPDF = async (result) => {
-        try {
-            const response = await resultService.downloadPDF(result.id || result.result_id);
-            downloadBlob(response.data, `result_${result.exam_code || result.examCode}.pdf`);
-        } catch (error) {
-            setAlert({
-                type: 'error',
-                message: error.response?.data?.error || 'Failed to download PDF'
-            });
-        }
-    };
-
-    const getStatusBadge = (result) => {
-        const isPublished = result.is_published || result.isPublished;
-        return isPublished ? 'success' : 'warning';
+    const getGradeBadge = (percentage) => {
+        if (percentage >= 70) return 'success';
+        if (percentage >= 50) return 'warning';
+        return 'error';
     };
 
     const columns = [
         {
-            key: 'studentName',
-            label: 'Student',
-            render: (value, row) => {
-                const name = row.student_name || row.studentName ||
-                    `${row.first_name || ''} ${row.last_name || ''}`.trim();
-                const examCode = row.exam_code || row.examCode;
+            key: 'name',
+            label: 'Student Name',
+            render: (_, row) => {
+                const fullName = `${row.first_name} ${row.middle_name || ''} ${row.last_name}`.trim();
                 return (
                     <div>
-                        <p className="font-medium text-gray-900">{name}</p>
-                        <p className="text-sm text-gray-500">{examCode}</p>
+                        <p className="font-medium text-gray-900">{fullName}</p>
+                        <p className="text-sm text-gray-500">{row.exam_code}</p>
                     </div>
                 );
-            }
+            },
         },
         {
-            key: 'examName',
-            label: 'Exam',
-            render: (value, row) => row.exam_name || row.examName || '-'
+            key: 'subject',
+            label: 'Subject',
+            render: (value) => (
+                <Badge variant="info">{value}</Badge>
+            ),
         },
         {
             key: 'score',
             label: 'Score',
             render: (value, row) => {
-                const score = row.score || row.total_score || 0;
-                const percentage = row.percentage_score || row.percentageScore || 0;
+                const percentage = Math.round((row.score / row.total_questions) * 100);
                 return (
                     <div>
-                        <p className="font-medium text-gray-900">{percentage.toFixed(1)}%</p>
-                        <p className="text-sm text-gray-500">{score} points</p>
+                        <p className="font-medium">{row.score}/{row.total_questions}</p>
+                        <Badge variant={getGradeBadge(percentage)} size="sm">
+                            {percentage}%
+                        </Badge>
                     </div>
                 );
-            }
+            },
         },
         {
-            key: 'status',
-            label: 'Status',
-            render: (value, row) => {
-                const isPublished = row.is_published || row.isPublished;
-                return (
-                    <Badge variant={getStatusBadge(row)}>
-                        {isPublished ? 'Published' : 'Pending'}
-                    </Badge>
-                );
-            }
-        },
-        {
-            key: 'submittedAt',
+            key: 'submitted_at',
             label: 'Submitted',
-            render: (value, row) => {
-                const date = row.submitted_at || row.submittedAt || row.created_at;
-                if (!date) return '-';
-                return new Date(date).toLocaleDateString();
-            }
-        },
-        {
-            key: 'actions',
-            label: 'Actions',
-            render: (_, row) => (
-                <div className="flex gap-2">
-                    <button
-                        onClick={() => handleViewDetails(row)}
-                        className="rounded p-1 text-blue-600 hover:bg-blue-50"
-                        title="View Details"
-                    >
-                        <Eye className="h-4 w-4" />
-                    </button>
-                    {!(row.is_published || row.isPublished) && (
-                        <button
-                            onClick={() => handlePublishClick(row)}
-                            className="rounded p-1 text-green-600 hover:bg-green-50"
-                            title="Publish"
-                        >
-                            <Download className="h-4 w-4" />
-                        </button>
-                    )}
-                    <button
-                        onClick={() => handleDownloadPDF(row)}
-                        className="rounded p-1 text-purple-600 hover:bg-purple-50"
-                        title="Download PDF"
-                    >
-                        <Download className="h-4 w-4" />
-                    </button>
-                </div>
-            )
+            render: (value) => {
+                const date = new Date(value);
+                return (
+                    <div className="text-sm text-gray-600">
+                        <p>{date.toLocaleDateString()}</p>
+                        <p className="text-xs">{date.toLocaleTimeString()}</p>
+                    </div>
+                );
+            },
         },
     ];
 
     return (
-        <div className="mx-auto max-w-7xl space-y-6 py-6">
-            {/* Alert */}
-            {alert && <Alert type={alert.type} message={alert.message} onClose={() => setAlert(null)} />}
+        <div className="space-y-6">
+            {alert && (
+                <Alert type={alert.type} message={alert.message} onClose={() => setAlert(null)} />
+            )}
 
-            {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-900">Results Management</h1>
-                    <p className="mt-1 text-sm text-gray-600">View and manage exam results</p>
+                    <p className="mt-1 text-sm text-gray-600">View and export exam results</p>
                 </div>
             </div>
 
-            {/* Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                <Card title="Total Results" value={stats.total} />
-                <Card title="Published" value={stats.published} />
-                <Card title="Pending" value={stats.pending} />
-                <Card title="Avg Score" value={`${stats.averageScore.toFixed(1)}%`} />
-                <Card title="Pass Rate" value={`${stats.passRate.toFixed(1)}%`} />
-            </div>
-
-            {/* Export Filters */}
+            {/* Filters */}
             <Card>
-                <h3 className="mb-4 text-lg font-semibold text-gray-900">Export Results</h3>
-                <div className="space-y-4">
-                    <Select
-                        label="Filter Type"
-                        value={exportFilter.type}
-                        onChange={(e) => setExportFilter({
-                            type: e.target.value,
-                            class: '',
-                            subject: '',
-                            exam_code: ''
-                        })}
-                        options={[
-                            { value: '', label: 'Select type' },
-                            { value: 'class', label: 'By Class' },
-                            { value: 'subject', label: 'By Class & Subject' },
-                            { value: 'exam_code', label: 'By Exam Code' }
-                        ]}
-                    />
-                    {exportFilter.type === 'class' && (
-                        <Input
-                            label="Class"
-                            value={exportFilter.class}
-                            onChange={(e) => setExportFilter({ ...exportFilter, class: e.target.value })}
-                            placeholder="e.g., SS1"
-                        />
-                    )}
-                    {exportFilter.type === 'subject' && (
-                        <div className="grid grid-cols-2 gap-4">
-                            <Input
-                                label="Class"
-                                value={exportFilter.class}
-                                onChange={(e) => setExportFilter({ ...exportFilter, class: e.target.value })}
-                                placeholder="e.g., SS1"
-                            />
-                            <Input
-                                label="Subject"
-                                value={exportFilter.subject}
-                                onChange={(e) => setExportFilter({ ...exportFilter, subject: e.target.value })}
-                                placeholder="e.g., Mathematics"
-                            />
-                        </div>
-                    )}
-                    {exportFilter.type === 'exam_code' && (
-                        <Input
-                            label="Exam Code"
-                            value={exportFilter.exam_code}
-                            onChange={(e) => setExportFilter({ ...exportFilter, exam_code: e.target.value })}
-                            placeholder="Enter student exam code"
-                        />
-                    )}
-                    <Button
-                        onClick={handleExportResults}
-                        loading={exporting}
-                        disabled={!isValidFilter(exportFilter)}
-                    >
-                        <Download className="mr-2 h-4 w-4" />
-                        Export Results
-                    </Button>
+                <div className="flex items-center gap-2 mb-4">
+                    <Filter className="h-5 w-5 text-gray-500" />
+                    <h3 className="text-lg font-semibold">Filters</h3>
                 </div>
-            </Card>
-
-            {/* Table Filters */}
-            <Card>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <Input
-                        label="Search"
-                        value={filters.search}
-                        onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                        placeholder="Search by student name or exam"
+                    <Select
+                        label="Class"
+                        value={filters.class}
+                        onChange={(e) => {
+                            setFilters({ ...filters, class: e.target.value, subject: '' });
+                            setResults([]);
+                        }}
+                        options={[
+                            { value: '', label: 'Select Class' },
+                            ...CLASS_LEVELS.map(c => ({ value: c, label: c }))
+                        ]}
+                        required
                     />
                     <Select
-                        label="Status"
-                        value={filters.status}
-                        onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+                        label="Subject"
+                        value={filters.subject}
+                        onChange={(e) => setFilters({ ...filters, subject: e.target.value })}
                         options={[
-                            { value: '', label: 'All Status' },
-                            { value: 'published', label: 'Published' },
-                            { value: 'pending', label: 'Pending' }
+                            { value: '', label: 'All Subjects' },
+                            ...availableSubjects.map(s => ({ value: s, label: s }))
                         ]}
+                        disabled={!filters.class}
                     />
+                    <div className="flex items-end gap-2">
+                        <Button
+                            onClick={loadResults}
+                            disabled={!filters.class}
+                            className="flex-1"
+                        >
+                            Load Results
+                        </Button>
+                    </div>
                 </div>
             </Card>
 
-            {/* Table */}
-            <Card>
+            {/* Export Buttons */}
+            {results.length > 0 && (
+                <Card>
+                    <div className="flex flex-wrap gap-3">
+                        <Button
+                            variant="outline"
+                            onClick={handleExportText}
+                            disabled={!filters.subject}
+                        >
+                            <FileText className="mr-2 h-4 w-4" />
+                            Export as Text
+                        </Button>
+                        <Button
+                            variant="outline"
+                            onClick={handleExportCSV}
+                        >
+                            <Download className="mr-2 h-4 w-4" />
+                            Export as CSV
+                        </Button>
+                    </div>
+                </Card>
+            )}
+
+            {/* Results Table */}
+            <div className="card">
                 <Table
                     columns={columns}
                     data={results}
                     loading={loading}
-                    emptyMessage="No results found."
+                    emptyMessage="No results found. Select a class and load results."
                 />
-            </Card>
+            </div>
 
-            {/* Details Modal */}
-            <Modal
-                isOpen={isDetailsModalOpen}
-                onClose={() => setIsDetailsModalOpen(false)}
-                title="Result Details"
-            >
-                {selectedResult && (
-                    <div className="space-y-4">
-                        <div>
-                            <p className="text-sm text-gray-600">Student</p>
-                            <p className="font-medium">
-                                {selectedResult.student_name || selectedResult.studentName}
-                            </p>
-                        </div>
-                        <div>
-                            <p className="text-sm text-gray-600">Exam</p>
-                            <p className="font-medium">
-                                {selectedResult.exam_name || selectedResult.examName}
-                            </p>
-                        </div>
-                        <div>
-                            <p className="text-sm text-gray-600">Score</p>
-                            <p className="text-2xl font-bold text-blue-600">
-                                {(selectedResult.percentage_score || selectedResult.percentageScore || 0).toFixed(1)}%
-                            </p>
-                        </div>
-                        <div>
-                            <p className="text-sm text-gray-600">Status</p>
-                            <Badge variant={getStatusBadge(selectedResult)}>
-                                {(selectedResult.is_published || selectedResult.isPublished) ? 'Published' : 'Pending'}
-                            </Badge>
-                        </div>
-                        <Button onClick={() => handleDownloadPDF(selectedResult)} className="w-full">
-                            <Download className="mr-2 h-4 w-4" />
-                            Download PDF
-                        </Button>
-                    </div>
-                )}
-            </Modal>
-
-            {/* Publish Confirmation */}
-            <ConfirmDialog
-                isOpen={isPublishDialogOpen}
-                onClose={() => setIsPublishDialogOpen(false)}
-                onConfirm={handlePublishConfirm}
-                title="Publish Result"
-                message="Are you sure you want to publish this result? Students will be able to view it."
-                confirmText="Publish"
-                type="default"
-                loading={submitting}
-            />
+            {/* Statistics */}
+            {results.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <Card
+                        title="Total Students"
+                        value={results.length}
+                    />
+                    <Card
+                        title="Average Score"
+                        value={`${Math.round(results.reduce((sum, r) => sum + (r.score / r.total_questions * 100), 0) / results.length)}%`}
+                    />
+                    <Card
+                        title="Pass Rate"
+                        value={`${Math.round((results.filter(r => (r.score / r.total_questions * 100) >= 50).length / results.length) * 100)}%`}
+                        subtitle="≥50% passing"
+                    />
+                    <Card
+                        title="Excellence Rate"
+                        value={`${Math.round((results.filter(r => (r.score / r.total_questions * 100) >= 70).length / results.length) * 100)}%`}
+                        subtitle="≥70% excellent"
+                    />
+                </div>
+            )}
         </div>
     );
 };

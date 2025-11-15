@@ -1,4 +1,4 @@
-import clsx from 'clsx';
+mport clsx from 'clsx';
 
 const Loader = ({ fullScreen = false, size = 'md', text = '' }) => {
   const sizes = {

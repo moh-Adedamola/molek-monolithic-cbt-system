@@ -1,392 +1,367 @@
 import { useState, useEffect } from 'react';
-import {
-  Plus,
-  Edit,
-  Trash2,
-  Copy,
-  Eye,
-  Calendar,
-  Clock,
-  Users,
-  FileQuestion,
-  PlayCircle,
-  StopCircle,
-  CheckCircle,
-} from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Clock, ToggleLeft, ToggleRight, Trash2, Eye } from 'lucide-react';
 import Table from '../../components/common/Table';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
+import Input from '../../components/common/Input';
+import Select from '../../components/common/Select';
 import Badge from '../../components/common/Badge';
 import Alert from '../../components/common/Alert';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 import Card from '../../components/common/Card';
-import { examService } from '../../services/services';
+import { getAllExams, getExamById, updateExam, deleteExam, activateExam, getSubjects } from '../../services/api';
+
+const CLASS_LEVELS = ['JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3'];
 
 const ExamManagement = () => {
-  const navigate = useNavigate();
-  const [exams, setExams] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
-  const [selectedExam, setSelectedExam] = useState(null);
-  const [alert, setAlert] = useState(null);
-  const [stats, setStats] = useState({
-    total: 0,
-    draft: 0,
-    scheduled: 0,
-    active: 0,
-    completed: 0,
-  });
-  const [filters, setFilters] = useState({
-    status: '',
-  });
-  const [submitting, setSubmitting] = useState(false);
+    const [exams, setExams] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+    const [isViewModalOpen, setIsViewModalOpen] = useState(false);
+    const [selectedExam, setSelectedExam] = useState(null);
+    const [examDetails, setExamDetails] = useState(null);
+    const [alert, setAlert] = useState(null);
+    const [subjectsByClass, setSubjectsByClass] = useState({});
+    const [selectedClass, setSelectedClass] = useState('');
+    const [availableSubjects, setAvailableSubjects] = useState([]);
 
-  useEffect(() => {
-    loadExams();
-  }, [filters]);
-
-  const loadExams = async () => {
-    try {
-      setLoading(true);
-      const params = { ...filters };
-      const response = await examService.getAll(params);
-      const examList = response.data?.exams || response.data || [];
-      setExams(examList);
-
-      // Calculate stats
-      const draft = examList.filter((e) => e.status === 'draft').length;
-      const scheduled = examList.filter((e) => e.status === 'scheduled').length;
-      const active = examList.filter((e) => e.status === 'active').length;
-      const completed = examList.filter((e) => e.status === 'completed').length;
-
-      setStats({
-        total: examList.length,
-        draft,
-        scheduled,
-        active,
-        completed,
-      });
-    } catch (error) {
-      showAlert('error', error.message || 'Failed to load exams');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const showAlert = (type, message) => {
-    setAlert({ type, message });
-  };
-
-  const handleCreateExam = () => {
-    navigate('/admin/exams/create');
-  };
-
-  const handleEditExam = (exam) => {
-    navigate(`/admin/exams/edit/${exam.id}`);
-  };
-
-  const handleViewExam = (exam) => {
-    navigate(`/admin/exams/${exam.id}`);
-  };
-
-  const handleCloneExam = async (exam) => {
-    try {
-      const response = await examService.clone(exam.id, {
-        exam_name: `${exam.exam_name || exam.examName} (Copy)`,
-      });
-      showAlert('success', 'Exam cloned successfully');
-      loadExams();
-    } catch (error) {
-      showAlert('error', error.message || 'Failed to clone exam');
-    }
-  };
-
-  const handlePublishClick = (exam) => {
-    setSelectedExam(exam);
-    setIsPublishDialogOpen(true);
-  };
-
-  const handlePublishConfirm = async () => {
-    try {
-      setSubmitting(true);
-      await examService.publish(selectedExam.id);
-      showAlert('success', 'Exam published successfully');
-      setIsPublishDialogOpen(false);
-      setSelectedExam(null);
-      loadExams();
-    } catch (error) {
-      showAlert('error', error.message || 'Failed to publish exam');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleDeleteClick = (exam) => {
-    setSelectedExam(exam);
-    setIsDeleteDialogOpen(true);
-  };
-
-  const handleDeleteConfirm = async () => {
-    try {
-      setSubmitting(true);
-      await examService.delete(selectedExam.id);
-      showAlert('success', 'Exam deleted successfully');
-      setIsDeleteDialogOpen(false);
-      setSelectedExam(null);
-      loadExams();
-    } catch (error) {
-      showAlert('error', error.message || 'Failed to delete exam');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const getStatusBadge = (status) => {
-    const variants = {
-      draft: 'default',
-      scheduled: 'info',
-      active: 'success',
-      completed: 'default',
-    };
-    return variants[status] || 'default';
-  };
-
-  const formatDateTime = (dateString) => {
-    if (!dateString) return '-';
-    const date = new Date(dateString);
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
+    const [formData, setFormData] = useState({
+        duration_minutes: 60
     });
-  };
+    const [submitting, setSubmitting] = useState(false);
 
-  const columns = [
-    {
-      key: 'examName',
-      label: 'Exam Name',
-      render: (value, row) => (
-        <div>
-          <p className="font-medium text-gray-900">{row.exam_name || row.examName}</p>
-          <p className="text-sm text-gray-500">
-            {row.subject_name || row.subjectName} • {row.class_level || row.classLevel}
-          </p>
-        </div>
-      ),
-    },
-    {
-      key: 'startTime',
-      label: 'Start Time',
-      render: (value, row) => (
-        <div className="text-sm">
-          <p className="text-gray-900">{formatDateTime(row.start_time || row.startTime)}</p>
-        </div>
-      ),
-    },
-    {
-      key: 'duration',
-      label: 'Duration',
-      render: (value, row) => {
-        const duration = row.duration_minutes || row.durationMinutes;
-        return (
-          <div className="flex items-center gap-1 text-sm text-gray-600">
-            <Clock className="h-4 w-4" />
-            {duration} min
-          </div>
-        );
-      },
-    },
-    {
-      key: 'totalQuestions',
-      label: 'Questions',
-      render: (value, row) => (
-        <div className="flex items-center gap-1 text-sm text-gray-600">
-          <FileQuestion className="h-4 w-4" />
-          {row.total_questions || row.totalQuestions || 0}
-        </div>
-      ),
-    },
-    {
-      key: 'status',
-      label: 'Status',
-      render: (value, row) => {
-        const status = row.status || 'draft';
-        return (
-          <Badge variant={getStatusBadge(status)}>
-            {status.charAt(0).toUpperCase() + status.slice(1)}
-          </Badge>
-        );
-      },
-    },
-    {
-      key: 'actions',
-      label: 'Actions',
-      render: (_, row) => (
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleViewExam(row)}
-            className="rounded p-1 text-blue-600 hover:bg-blue-50"
-            title="View Details"
-          >
-            <Eye className="h-4 w-4" />
-          </button>
-          {(row.status === 'draft' || row.status === 'scheduled') && (
-            <>
-              <button
-                onClick={() => handleEditExam(row)}
-                className="rounded p-1 text-green-600 hover:bg-green-50"
-                title="Edit"
-              >
-                <Edit className="h-4 w-4" />
-              </button>
-              <button
-                onClick={() => handleCloneExam(row)}
-                className="rounded p-1 text-purple-600 hover:bg-purple-50"
-                title="Clone"
-              >
-                <Copy className="h-4 w-4" />
-              </button>
-            </>
-          )}
-          {row.status === 'draft' && (
-            <button
-              onClick={() => handlePublishClick(row)}
-              className="rounded p-1 text-green-600 hover:bg-green-50"
-              title="Publish"
+    useEffect(() => {
+        loadExams();
+        loadSubjects();
+    }, []);
+
+    const loadExams = async () => {
+        try {
+            setLoading(true);
+            const response = await getAllExams();
+            const examList = response.data?.exams || response.data || [];
+            setExams(examList);
+        } catch (error) {
+            showAlert('error', error.message || 'Failed to load exams');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const loadSubjects = async () => {
+        try {
+            const response = await getSubjects();
+            setSubjectsByClass(response.data?.subjects || {});
+        } catch (error) {
+            console.error('Failed to load subjects:', error);
+        }
+    };
+
+    useEffect(() => {
+        if (selectedClass && subjectsByClass[selectedClass]) {
+            setAvailableSubjects(subjectsByClass[selectedClass]);
+        } else {
+            setAvailableSubjects([]);
+        }
+    }, [selectedClass, subjectsByClass]);
+
+    const showAlert = (type, message) => {
+        setAlert({ type, message });
+    };
+
+    const handleEditClick = (exam) => {
+        setSelectedExam(exam);
+        setFormData({
+            duration_minutes: exam.duration_minutes || 60
+        });
+        setIsEditModalOpen(true);
+    };
+
+    const handleViewClick = async (exam) => {
+        try {
+            setLoading(true);
+            const response = await getExamById(exam.id);
+            setExamDetails(response.data);
+            setIsViewModalOpen(true);
+        } catch (error) {
+            showAlert('error', 'Failed to load exam details');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleUpdateSubmit = async (e) => {
+        e.preventDefault();
+
+        try {
+            setSubmitting(true);
+            await updateExam(selectedExam.id, formData);
+            showAlert('success', 'Exam updated successfully');
+            setIsEditModalOpen(false);
+            setSelectedExam(null);
+            loadExams();
+        } catch (error) {
+            showAlert('error', error.message || 'Failed to update exam');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleDeleteClick = (exam) => {
+        setSelectedExam(exam);
+        setIsDeleteDialogOpen(true);
+    };
+
+    const handleDeleteConfirm = async () => {
+        try {
+            setSubmitting(true);
+            await deleteExam(selectedExam.id);
+            showAlert('success', 'Exam deleted successfully');
+            setIsDeleteDialogOpen(false);
+            setSelectedExam(null);
+            loadExams();
+        } catch (error) {
+            showAlert('error', error.message || 'Failed to delete exam');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleToggleActive = async (exam) => {
+        try {
+            await activateExam(exam.subject, exam.class, !exam.is_active);
+            showAlert('success', `Exam ${exam.is_active ? 'deactivated' : 'activated'} successfully`);
+            loadExams();
+        } catch (error) {
+            showAlert('error', error.message || 'Failed to toggle exam status');
+        }
+    };
+
+    const columns = [
+        {
+            key: 'subject',
+            label: 'Subject',
+            render: (value, row) => (
+                <div>
+                    <p className="font-medium text-gray-900">{row.subject}</p>
+                    <p className="text-sm text-gray-500">{row.class}</p>
+                </div>
+            ),
+        },
+        {
+            key: 'duration_minutes',
+            label: 'Duration',
+            render: (value) => (
+                <div className="flex items-center gap-1 text-sm text-gray-600">
+                    <Clock className="h-4 w-4" />
+                    {value} min
+                </div>
+            ),
+        },
+        {
+            key: 'total_questions',
+            label: 'Questions',
+            render: (value) => (
+                <span className="text-gray-600">{value || 0}</span>
+            ),
+        },
+        {
+            key: 'is_active',
+            label: 'Status',
+            render: (value) => (
+                <Badge variant={value ? 'success' : 'default'}>
+                    {value ? 'Active' : 'Inactive'}
+                </Badge>
+            ),
+        },
+        {
+            key: 'actions',
+            label: 'Actions',
+            render: (_, row) => (
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => handleViewClick(row)}
+                        className="rounded p-1 text-blue-600 hover:bg-blue-50"
+                        title="View Details"
+                    >
+                        <Eye className="h-4 w-4" />
+                    </button>
+                    <button
+                        onClick={() => handleEditClick(row)}
+                        className="rounded p-1 text-green-600 hover:bg-green-50"
+                        title="Edit Duration"
+                    >
+                        <Clock className="h-4 w-4" />
+                    </button>
+                    <button
+                        onClick={() => handleToggleActive(row)}
+                        className={`rounded p-1 ${
+                            row.is_active
+                                ? 'text-orange-600 hover:bg-orange-50'
+                                : 'text-green-600 hover:bg-green-50'
+                        }`}
+                        title={row.is_active ? 'Deactivate' : 'Activate'}
+                    >
+                        {row.is_active ? (
+                            <ToggleRight className="h-4 w-4" />
+                        ) : (
+                            <ToggleLeft className="h-4 w-4" />
+                        )}
+                    </button>
+                    <button
+                        onClick={() => handleDeleteClick(row)}
+                        className="rounded p-1 text-red-600 hover:bg-red-50"
+                        title="Delete"
+                    >
+                        <Trash2 className="h-4 w-4" />
+                    </button>
+                </div>
+            ),
+        },
+    ];
+
+    return (
+        <div className="space-y-6">
+            {alert && (
+                <Alert type={alert.type} message={alert.message} onClose={() => setAlert(null)} />
+            )}
+
+            <div className="flex items-center justify-between">
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-900">Exam Management</h1>
+                    <p className="mt-1 text-sm text-gray-600">Configure exam settings and activate exams</p>
+                </div>
+            </div>
+
+            <div className="card">
+                <p className="text-sm text-gray-600 mb-4">
+                    ℹ️ <strong>Note:</strong> Upload questions in the Question Bank first. Then configure exam duration and activate them here.
+                </p>
+            </div>
+
+            <div className="card">
+                <Table
+                    columns={columns}
+                    data={exams}
+                    loading={loading}
+                    emptyMessage="No exams found. Upload questions in Question Bank to create exams."
+                />
+            </div>
+
+            {/* Edit Duration Modal */}
+            <Modal
+                isOpen={isEditModalOpen}
+                onClose={() => setIsEditModalOpen(false)}
+                title="Edit Exam Duration"
+                size="sm"
             >
-              <PlayCircle className="h-4 w-4" />
-            </button>
-          )}
-          {row.status === 'draft' && (
-            <button
-              onClick={() => handleDeleteClick(row)}
-              className="rounded p-1 text-red-600 hover:bg-red-50"
-              title="Delete"
+                <form onSubmit={handleUpdateSubmit} className="space-y-4">
+                    <div>
+                        <p className="text-sm text-gray-600 mb-2">
+                            <strong>Subject:</strong> {selectedExam?.subject}<br />
+                            <strong>Class:</strong> {selectedExam?.class}
+                        </p>
+                    </div>
+                    <Input
+                        label="Duration (minutes)"
+                        type="number"
+                        min="10"
+                        max="300"
+                        value={formData.duration_minutes}
+                        onChange={(e) => setFormData({ ...formData, duration_minutes: parseInt(e.target.value) })}
+                        required
+                    />
+                    <div className="flex justify-end gap-3 pt-4">
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => setIsEditModalOpen(false)}
+                        >
+                            Cancel
+                        </Button>
+                        <Button type="submit" loading={submitting}>
+                            Update Duration
+                        </Button>
+                    </div>
+                </form>
+            </Modal>
+
+            {/* View Exam Details Modal */}
+            <Modal
+                isOpen={isViewModalOpen}
+                onClose={() => {
+                    setIsViewModalOpen(false);
+                    setExamDetails(null);
+                }}
+                title="Exam Details"
+                size="lg"
             >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          )}
+                {examDetails && (
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <p className="text-sm text-gray-600">Subject</p>
+                                <p className="font-medium">{examDetails.exam.subject}</p>
+                            </div>
+                            <div>
+                                <p className="text-sm text-gray-600">Class</p>
+                                <p className="font-medium">{examDetails.exam.class}</p>
+                            </div>
+                            <div>
+                                <p className="text-sm text-gray-600">Duration</p>
+                                <p className="font-medium">{examDetails.exam.duration_minutes} minutes</p>
+                            </div>
+                            <div>
+                                <p className="text-sm text-gray-600">Total Questions</p>
+                                <p className="font-medium">{examDetails.exam.total_questions}</p>
+                            </div>
+                            <div>
+                                <p className="text-sm text-gray-600">Status</p>
+                                <Badge variant={examDetails.exam.is_active ? 'success' : 'default'}>
+                                    {examDetails.exam.is_active ? 'Active' : 'Inactive'}
+                                </Badge>
+                            </div>
+                        </div>
+                        <div className="border-t pt-4">
+                            <h4 className="font-medium mb-2">Questions Preview</h4>
+                            <div className="max-h-96 overflow-y-auto space-y-3">
+                                {examDetails.questions.slice(0, 5).map((q, idx) => (
+                                    <div key={q.id} className="bg-gray-50 p-3 rounded">
+                                        <p className="text-sm font-medium mb-1">Q{idx + 1}: {q.question_text}</p>
+                                        <div className="text-xs text-gray-600 ml-4">
+                                            <p>A: {q.option_a}</p>
+                                            <p>B: {q.option_b}</p>
+                                            <p>C: {q.option_c}</p>
+                                            <p>D: {q.option_d}</p>
+                                            <p className="text-green-600 font-medium">Correct: {q.correct_answer}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                                {examDetails.questions.length > 5 && (
+                                    <p className="text-sm text-gray-500 text-center">
+                                        ... and {examDetails.questions.length - 5} more questions
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </Modal>
+
+            {/* Delete Confirmation */}
+            <ConfirmDialog
+                isOpen={isDeleteDialogOpen}
+                onClose={() => setIsDeleteDialogOpen(false)}
+                onConfirm={handleDeleteConfirm}
+                title="Delete Exam"
+                message={`Are you sure you want to delete the exam for ${selectedExam?.subject} - ${selectedExam?.class}? This will also delete all ${selectedExam?.total_questions} questions and cannot be undone.`}
+                confirmText="Delete"
+                type="danger"
+                loading={submitting}
+            />
         </div>
-      ),
-    },
-  ];
-
-  return (
-    <div className="space-y-6">
-      {/* Alert */}
-      {alert && (
-        <Alert type={alert.type} message={alert.message} onClose={() => setAlert(null)} />
-      )}
-
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Exam Management</h1>
-          <p className="mt-1 text-sm text-gray-600">Create and manage exams</p>
-        </div>
-        <Button onClick={handleCreateExam}>
-          <Plus className="mr-2 h-4 w-4" />
-          Create Exam
-        </Button>
-      </div>
-
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-5">
-        <Card title="Total Exams" value={stats.total} icon={FileQuestion} />
-        <Card
-          title="Draft"
-          value={stats.draft}
-          subtitle="Not published"
-          className="border-l-4 border-l-gray-400"
-        />
-        <Card
-          title="Scheduled"
-          value={stats.scheduled}
-          subtitle="Ready to start"
-          className="border-l-4 border-l-blue-400"
-        />
-        <Card
-          title="Active"
-          value={stats.active}
-          subtitle="In progress"
-          className="border-l-4 border-l-green-400"
-        />
-        <Card
-          title="Completed"
-          value={stats.completed}
-          subtitle="Finished"
-          className="border-l-4 border-l-gray-400"
-        />
-      </div>
-
-      {/* Filter Tabs */}
-      <div className="card">
-        <div className="flex gap-2 border-b border-gray-200">
-          {[
-            { value: '', label: 'All' },
-            { value: 'draft', label: 'Draft' },
-            { value: 'scheduled', label: 'Scheduled' },
-            { value: 'active', label: 'Active' },
-            { value: 'completed', label: 'Completed' },
-          ].map((tab) => (
-            <button
-              key={tab.value}
-              onClick={() => setFilters({ ...filters, status: tab.value })}
-              className={`border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
-                filters.status === tab.value
-                  ? 'border-blue-600 text-blue-600'
-                  : 'border-transparent text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Table */}
-      <div className="card">
-        <Table
-          columns={columns}
-          data={exams}
-          loading={loading}
-          emptyMessage="No exams found. Create your first exam to get started."
-        />
-      </div>
-
-      {/* Publish Confirmation */}
-      <ConfirmDialog
-        isOpen={isPublishDialogOpen}
-        onClose={() => setIsPublishDialogOpen(false)}
-        onConfirm={handlePublishConfirm}
-        title="Publish Exam"
-        message={`Are you sure you want to publish "${
-          selectedExam?.exam_name || selectedExam?.examName
-        }"? Students will be able to see and take this exam after publishing.`}
-        confirmText="Publish"
-        type="default"
-        loading={submitting}
-      />
-
-      {/* Delete Confirmation */}
-      <ConfirmDialog
-        isOpen={isDeleteDialogOpen}
-        onClose={() => setIsDeleteDialogOpen(false)}
-        onConfirm={handleDeleteConfirm}
-        title="Delete Exam"
-        message={`Are you sure you want to delete "${
-          selectedExam?.exam_name || selectedExam?.examName
-        }"? This action cannot be undone.`}
-        confirmText="Delete"
-        type="danger"
-        loading={submitting}
-      />
-    </div>
-  );
+    );
 };
 
 export default ExamManagement;

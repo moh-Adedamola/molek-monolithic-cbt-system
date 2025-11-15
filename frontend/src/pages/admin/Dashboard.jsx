@@ -7,27 +7,23 @@ import {
     ClipboardList,
     TrendingUp,
     CheckCircle,
-    Award,
 } from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import Card from '../../components/common/Card';
 import Button from '../../components/common/Button';
-import { dashboardService } from '../../services/services';
+import Badge from '../../components/common/Badge';
+import { getDashboardStats, getRecentSubmissions } from '../../services/api';
 
 const AdminDashboard = () => {
     const navigate = useNavigate();
     const [loading, setLoading] = useState(true);
     const [stats, setStats] = useState({
-        totalUsers: 0,
         totalStudents: 0,
-        totalSubjects: 0,
         totalExams: 0,
         activeExams: 0,
         completedExams: 0,
+        totalSubjects: 0,
     });
-    const [upcomingExams, setUpcomingExams] = useState([]);
-    const [recentActivity, setRecentActivity] = useState([]);
-    const [performanceData, setPerformanceData] = useState([]);
+    const [recentSubmissions, setRecentSubmissions] = useState([]);
 
     useEffect(() => {
         loadDashboardData();
@@ -38,64 +34,53 @@ const AdminDashboard = () => {
             setLoading(true);
 
             // Load stats
-            const statsResponse = await dashboardService.getStats();
+            const statsResponse = await getDashboardStats();
             setStats(statsResponse.data || {
-                totalUsers: 0,
                 totalStudents: 0,
-                totalSubjects: 0,
                 totalExams: 0,
                 activeExams: 0,
-                completedExams: 0
+                completedExams: 0,
+                totalSubjects: 0
             });
 
-            // Load upcoming exams
-            const examsResponse = await dashboardService.getUpcomingExams({ limit: 5 });
-            setUpcomingExams(examsResponse.data?.exams || []);
-
-            // Load recent activity
-            const activityResponse = await dashboardService.getRecentActivity({ limit: 10 });
-            setRecentActivity(activityResponse.data?.activities || []);
-
-            // Load performance data
-            const performanceResponse = await dashboardService.getPerformanceData();
-            setPerformanceData(performanceResponse.data?.performance || []);
+            // Load recent submissions
+            const submissionsResponse = await getRecentSubmissions({ limit: 10 });
+            setRecentSubmissions(submissionsResponse.data?.submissions || []);
         } catch (error) {
             console.error('Failed to load dashboard:', error);
-            // Set empty data on error to avoid crashes
             setStats({
-                totalUsers: 0,
                 totalStudents: 0,
-                totalSubjects: 0,
                 totalExams: 0,
                 activeExams: 0,
-                completedExams: 0
+                completedExams: 0,
+                totalSubjects: 0
             });
-            setUpcomingExams([]);
-            setRecentActivity([]);
-            setPerformanceData([]);
+            setRecentSubmissions([]);
         } finally {
             setLoading(false);
         }
     };
 
     return (
-        <div className="mx-auto max-w-7xl space-y-6 py-6">
+        <div className="mx-auto max-w-7xl space-y-6 py-6 px-4">
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
                     <h1 className="text-2xl font-bold text-gray-900">Admin Dashboard</h1>
-                    <p className="mt-1 text-sm text-gray-600">Welcome back! Here's what's happening.</p>
+                    <p className="mt-1 text-sm text-gray-600">Welcome back! Here's your overview.</p>
                 </div>
+                <Button onClick={() => loadDashboardData()} variant="outline">
+                    Refresh
+                </Button>
             </div>
 
             {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-6 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
                 <Card title="Total Students" value={stats.totalStudents} icon={GraduationCap} />
                 <Card title="Total Exams" value={stats.totalExams} icon={ClipboardList} />
                 <Card title="Active Exams" value={stats.activeExams} icon={TrendingUp} />
                 <Card title="Completed" value={stats.completedExams} icon={CheckCircle} />
                 <Card title="Subjects" value={stats.totalSubjects} icon={BookOpen} />
-                <Card title="Users" value={stats.totalUsers} icon={Users} />
             </div>
 
             {/* Quick Actions */}
@@ -108,7 +93,7 @@ const AdminDashboard = () => {
                         className="flex flex-col items-center gap-2 p-4"
                     >
                         <GraduationCap className="h-6 w-6" />
-                        Manage Students
+                        <span className="text-sm">Manage Students</span>
                     </Button>
                     <Button
                         variant="outline"
@@ -116,7 +101,7 @@ const AdminDashboard = () => {
                         className="flex flex-col items-center gap-2 p-4"
                     >
                         <BookOpen className="h-6 w-6" />
-                        Question Bank
+                        <span className="text-sm">Question Bank</span>
                     </Button>
                     <Button
                         variant="outline"
@@ -124,78 +109,50 @@ const AdminDashboard = () => {
                         className="flex flex-col items-center gap-2 p-4"
                     >
                         <ClipboardList className="h-6 w-6" />
-                        Manage Exams
+                        <span className="text-sm">Manage Exams</span>
                     </Button>
                     <Button
                         variant="outline"
                         onClick={() => navigate('/admin/results')}
                         className="flex flex-col items-center gap-2 p-4"
                     >
-                        <Award className="h-6 w-6" />
-                        View Results
+                        <CheckCircle className="h-6 w-6" />
+                        <span className="text-sm">View Results</span>
                     </Button>
                 </div>
             </Card>
 
-            {/* Charts & Activity */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <Card title="Performance Trend">
-                    {loading ? (
-                        <div className="flex h-[300px] items-center justify-center">
-                            <p className="text-gray-500">Loading...</p>
-                        </div>
-                    ) : performanceData.length === 0 ? (
-                        <div className="flex h-[300px] items-center justify-center">
-                            <p className="text-gray-500">No performance data available</p>
-                        </div>
-                    ) : (
-                        <ResponsiveContainer width="100%" height={300}>
-                            <LineChart data={performanceData}>
-                                <Line type="monotone" dataKey="avgScore" stroke="#3b82f6" />
-                                <XAxis dataKey="month" />
-                                <YAxis />
-                                <Tooltip />
-                            </LineChart>
-                        </ResponsiveContainer>
-                    )}
-                </Card>
-
-                <Card title="Recent Activity">
-                    {loading ? (
-                        <p className="text-gray-500">Loading...</p>
-                    ) : recentActivity.length === 0 ? (
-                        <p className="text-gray-500">No recent activity</p>
-                    ) : (
-                        <div className="space-y-2">
-                            {recentActivity.map(activity => (
-                                <div key={activity.id} className="text-sm text-gray-700 border-b pb-2">
-                                    <p>{activity.action}</p>
-                                    <p className="text-xs text-gray-500">{activity.timestamp}</p>
+            {/* Recent Activity */}
+            <Card>
+                <h3 className="mb-4 text-lg font-semibold text-gray-900">Recent Submissions</h3>
+                {loading ? (
+                    <p className="text-gray-500">Loading...</p>
+                ) : recentSubmissions.length === 0 ? (
+                    <p className="text-gray-500">No recent submissions</p>
+                ) : (
+                    <div className="space-y-3">
+                        {recentSubmissions.map((sub, idx) => {
+                            const percentage = Math.round((sub.score / sub.total_questions) * 100);
+                            return (
+                                <div key={idx} className="flex items-center justify-between border-b pb-3 last:border-b-0">
+                                    <div>
+                                        <p className="font-medium text-gray-900">
+                                            {sub.first_name} {sub.last_name}
+                                        </p>
+                                        <p className="text-sm text-gray-500">{sub.subject}</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="font-medium">{sub.score}/{sub.total_questions}</p>
+                                        <Badge variant={percentage >= 70 ? 'success' : percentage >= 50 ? 'warning' : 'error'} size="sm">
+                                            {percentage}%
+                                        </Badge>
+                                    </div>
                                 </div>
-                            ))}
-                        </div>
-                    )}
-                </Card>
-
-                <Card title="Upcoming Exams">
-                    {loading ? (
-                        <p className="text-gray-500">Loading...</p>
-                    ) : upcomingExams.length === 0 ? (
-                        <p className="text-gray-500">No upcoming exams</p>
-                    ) : (
-                        <div className="space-y-2">
-                            {upcomingExams.map(exam => (
-                                <div key={exam.id} className="text-sm text-gray-700 border-b pb-2">
-                                    <p className="font-medium">{exam.exam_name || exam.examName}</p>
-                                    <p className="text-xs text-gray-500">
-                                        {exam.subject_name || exam.subjectName} • {exam.start_time || exam.startTime}
-                                    </p>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </Card>
-            </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </Card>
         </div>
     );
 };

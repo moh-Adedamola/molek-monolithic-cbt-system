@@ -1,136 +1,61 @@
 import { useState, useEffect } from 'react';
-import {
-    Plus,
-    Upload } from 'lucide-react';
-import Table from '../../components/common/Table';
+import { Plus, Upload, Eye, ToggleLeft, ToggleRight, FileText } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
 import Input from '../../components/common/Input';
 import Select from '../../components/common/Select';
-import Badge from '../../components/common/Badge';
 import Alert from '../../components/common/Alert';
-import ConfirmDialog from '../../components/common/ConfirmDialog';
 import Card from '../../components/common/Card';
-import { createQuestions, uploadQuestions, getAllQuestions, activateExam } from '../../services/api';
-import { downloadBlob } from '../../utils/adminUtils'; // Not used here, but available
+import Badge from '../../components/common/Badge';
+import { uploadQuestions, getAllQuestions, activateExam } from '../../services/api';
 
 const CLASS_LEVELS = ['JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3'];
-const DIFFICULTY_LEVELS = ['easy', 'medium', 'hard'];
 
 const QuestionBank = () => {
-    const [questions, setQuestions] = useState([]); // From API
-    const [loading, setLoading] = useState(true);
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
-    const [isBulkUploadModalOpen, setIsBulkUploadModalOpen] = useState(false);
-    const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-    const [selectedQuestion, setSelectedQuestion] = useState(null);
+    const [activeTab, setActiveTab] = useState('upload');
+    const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
     const [alert, setAlert] = useState(null);
-    const [stats, setStats] = useState({
-        total: 0,
-        easy: 0,
-        medium: 0,
-        hard: 0,
-    });
-
-    // Filters
-    const [filters, setFilters] = useState({
-        subject_id: '',
-        class_level: '',
-        difficulty_level: '',
-        search: '',
-    });
-    const [showFilters, setShowFilters] = useState(false);
-
-    // Old multi-form state
-    const [manualQuestionMeta, setManualQuestionMeta] = useState({ subject: '', class: '' });
-    const [questionsArray, setQuestionsArray] = useState([{ text: '', a: '', b: '', c: '', d: '', correct: 'A' }]); // Old 'questions'
-
-    // Form state (new single)
-    const [formData, setFormData] = useState({
-        subjectId: '',
-        classLevel: '',
-        questionText: '',
-        optionA: '',
-        optionB: '',
-        optionC: '',
-        optionD: '',
-        correctAnswer: '',
-        difficulty: 'medium',
-        topic: '',
-        explanation: '',
-    });
-    const [formErrors, setFormErrors] = useState({});
+    const [allExamGroups, setAllExamGroups] = useState({});
+    const [filteredExamGroups, setFilteredExamGroups] = useState({});
+    const [loading, setLoading] = useState(false);
+    const [questionsLoading, setQuestionsLoading] = useState(true);
+    const [expandedExams, setExpandedExams] = useState(new Set());
+    const [selectedClass, setSelectedClass] = useState('');
+    const [subjects, setSubjects] = useState([]);
+    const [csvMeta, setCsvMeta] = useState({ subject: '', class: '' });
+    const [uploadFile, setUploadFile] = useState(null);
     const [submitting, setSubmitting] = useState(false);
 
-    // Bulk upload state (old CSV)
-    const [uploadFile, setUploadFile] = useState(null);
-    const [csvQuestionMeta, setCsvQuestionMeta] = useState({ subject: '', class: '' }); // Old meta
-    const [uploading, setUploading] = useState(false);
-
-    // Old handlers
-    const addQuestionField = () => {
-        setQuestionsArray([...questionsArray, { text: '', a: '', b: '', c: '', d: '', correct: 'A' }]);
+    const showAlert = (type, message) => {
+        setAlert({ type, message });
+        setTimeout(() => setAlert(null), 5000);
     };
 
-    const updateQuestion = (index, field, value) => {
-        const newQuestions = [...questionsArray];
-        newQuestions[index][field] = value;
-        setQuestionsArray(newQuestions);
-    };
-
-    const handleManualQuestions = async () => {
-        if (!manualQuestionMeta.subject || !manualQuestionMeta.class) {
-            setAlert({ type: 'error', message: 'Subject and class required' });
-            return;
-        }
-        setSubmitting(true);
-        try {
-            await createQuestions({ subject: manualQuestionMeta.subject, class: manualQuestionMeta.class, questions: questionsArray });
-            setAlert({ type: 'success', message: 'Questions saved!' });
-            setManualQuestionMeta({ subject: '', class: '' });
-            setQuestionsArray([{ text: '', a: '', b: '', c: '', d: '', correct: 'A' }]);
-            fetchAllQuestions(); // Refresh
-        } catch (err) {
-            setAlert({ type: 'error', message: err.response?.data?.error || 'Unknown error' });
-        }
-        setSubmitting(false);
-    };
-
-    const handleQuestionUpload = async (file) => {
-        if (!file || !csvQuestionMeta.subject || !csvQuestionMeta.class) {
-            setAlert({ type: 'error', message: 'Select file and fill subject/class for CSV upload' });
-            return;
-        }
-        setUploading(true);
-        try {
-            await uploadQuestions(file, csvQuestionMeta.subject, csvQuestionMeta.class);
-            setAlert({ type: 'success', message: 'Questions uploaded!' });
-            setCsvQuestionMeta({ subject: '', class: '' });
-            fetchAllQuestions(); // Refresh
-        } catch (err) {
-            setAlert({ type: 'error', message: 'Upload failed' });
-        }
-        setUploading(false);
-    };
-
-    // Exam grouping/toggle (old)
-    const [examGroups, setExamGroups] = useState({});
-    const [questionsLoading, setQuestionsLoading] = useState(false);
-    const [expandedExams, setExpandedExams] = useState(new Set());
+    useEffect(() => {
+        fetchAllQuestions();
+    }, []);
 
     const fetchAllQuestions = async () => {
-        setQuestionsLoading(true);
         try {
+            setQuestionsLoading(true);
             const res = await getAllQuestions();
             const rawQuestions = res.data.questions || [];
             const groups = {};
-            rawQuestions.forEach(q => {
+            const uniqueSubjects = new Set();
+
+            rawQuestions.forEach((q) => {
                 const safeSubject = q.subject || 'Unknown';
                 const safeClass = q.class || 'Unknown';
+                uniqueSubjects.add(safeSubject);
                 const key = `${safeSubject}-${safeClass}`;
                 if (!groups[key]) {
-                    groups[key] = { subject: safeSubject, class: safeClass, is_active: q.is_active || false, questions: [] };
+                    groups[key] = {
+                        subject: safeSubject,
+                        class: safeClass,
+                        is_active: q.is_active || false,
+                        duration_minutes: q.duration_minutes || 60,
+                        questions: [],
+                    };
                 }
                 groups[key].questions.push({
                     id: q.id,
@@ -139,179 +64,314 @@ const QuestionBank = () => {
                     option_b: q.option_b,
                     option_c: q.option_c,
                     option_d: q.option_d,
-                    correct_answer: q.correct_answer
+                    correct_answer: q.correct_answer,
                 });
             });
-            setExamGroups(groups);
-            setQuestions(rawQuestions); // For table too
-            // Calc stats from raw
-            const easy = rawQuestions.filter(q => q.difficulty_level === 'easy').length;
-            // ... similar for medium/hard
-            setStats({ total: rawQuestions.length, easy, medium: 0, hard: 0 }); // Update as needed
-        } catch (err) {
-            setAlert({ type: 'error', message: 'Failed to load questions' });
-        }
-        setQuestionsLoading(false);
-    };
 
-    const handleToggleExam = async (subject, classLevel, currentActive) => {
-        if (!confirm(`Set ${subject} for ${classLevel} to ${currentActive ? 'inactive' : 'active'}?`)) return;
-        setSubmitting(true);
-        try {
-            await activateExam(subject, classLevel, !currentActive);
-            setAlert({ type: 'success', message: 'Exam status updated!' });
-            fetchAllQuestions();
-        } catch (err) {
-            setAlert({ type: 'error', message: err.response?.data?.error || 'Unknown error' });
+            setSubjects(Array.from(uniqueSubjects).sort());
+            setAllExamGroups(groups);
+            setFilteredExamGroups(groups);
+        } catch {
+            showAlert('error', 'Failed to load questions');
+        } finally {
+            setQuestionsLoading(false);
         }
-        setSubmitting(false);
-    };
-
-    const toggleExamExpansion = (key) => {
-        const newExpanded = new Set(expandedExams);
-        if (newExpanded.has(key)) newExpanded.delete(key);
-        else newExpanded.add(key);
-        setExpandedExams(newExpanded);
     };
 
     useEffect(() => {
-        fetchAllQuestions(); // Replaces mock load
-    }, [filters]);
+        if (selectedClass) {
+            const filtered = Object.fromEntries(
+                Object.entries(allExamGroups).filter(([, group]) => group.class === selectedClass)
+            );
+            setFilteredExamGroups(filtered);
+        } else {
+            setFilteredExamGroups(allExamGroups);
+        }
+    }, [selectedClass, allExamGroups]);
 
-    // New handlers (single form, delete, etc.)—keep as-is, but wire to API when endpoints added
-    const handleSubmit = () => { /* TODO: questionService.create(formData) */ };
-    const handleDeleteConfirm = () => { /* TODO */ };
-    const handleFileChange = (e) => setUploadFile(e.target.files[0]);
+    const handleCsvUpload = async () => {
+        if (!uploadFile || !csvMeta.subject || !csvMeta.class) {
+            showAlert('error', 'Select file and fill subject/class');
+            return;
+        }
 
-    const columns = [
-        { key: 'questionText', label: 'Question' },
-        { key: 'subject', label: 'Subject' },
-        { key: 'classLevel', label: 'Class' },
-        { key: 'difficulty', label: 'Difficulty' },
-        { key: 'actions', label: 'Actions' },
-    ];
+        setSubmitting(true);
+        try {
+            await uploadQuestions(uploadFile, csvMeta.subject, csvMeta.class);
+            showAlert('success', 'Questions uploaded!');
+            setCsvMeta({ subject: '', class: '' });
+            setUploadFile(null);
+            setIsCsvModalOpen(false);
+            fetchAllQuestions();
+        } catch (err) {
+            showAlert('error', err.response?.data?.error || 'Upload failed');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handleFileChange = (e) => {
+        const file = e.target.files[0];
+        if (file && file.type !== 'text/csv' && !file.name.endsWith('.csv')) {
+            showAlert('error', 'Please upload a valid CSV file');
+            e.target.value = '';
+            return;
+        }
+        setUploadFile(file);
+    };
+
+    const triggerFileInput = (inputId) => document.getElementById(inputId)?.click();
+
+    const handleToggleExam = async (subject, classLevel, currentActive) => {
+        if (!subject || !classLevel || subject === 'Unknown' || classLevel === 'Unknown') {
+            showAlert('error', 'Invalid exam details. Please re-upload with valid subject and class.');
+            return;
+        }
+
+        if (!confirm(`${currentActive ? 'Deactivate' : 'Activate'} ${subject} for ${classLevel}?`)) {
+            return;
+        }
+
+        setLoading(true);
+        try {
+            await activateExam(subject, classLevel, !currentActive);
+            showAlert('success', `Exam ${currentActive ? 'deactivated' : 'activated'}`);
+            fetchAllQuestions();
+        } catch (err) {
+            showAlert('error', err.response?.data?.error || 'Toggle failed');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const toggleExpand = (key) => {
+        setExpandedExams((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) {
+                next.delete(key);
+            } else {
+                next.add(key);
+            }
+            return next;
+        });
+    };
 
     return (
-        <div className="mx-auto max-w-7xl space-y-6 py-6">
-            {/* Alert */}
+        <div className="mx-auto max-w-7xl space-y-6 py-6 px-4 sm:px-6 lg:px-8">
             {alert && <Alert type={alert.type} message={alert.message} onClose={() => setAlert(null)} />}
 
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <h1 className="text-2xl font-bold text-gray-900">Question Bank</h1>
-                <div className="flex gap-2">
-                    <Button onClick={() => setIsModalOpen(true)}><Plus className="mr-2 h-4 w-4" /> Add Question</Button>
-                    <Button onClick={() => setIsBulkUploadModalOpen(true)}><Upload className="mr-2 h-4 w-4" /> Bulk Upload</Button>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div>
+                    <h1 className="text-2xl font-bold text-gray-900">Question Bank</h1>
+                    <p className="mt-1 text-sm text-gray-600">Upload questions and manage exams</p>
                 </div>
             </div>
 
-            {/* Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <Card title="Total Questions" value={stats.total} />
-                <Card title="Easy" value={stats.easy} />
-                <Card title="Medium" value={stats.medium} />
-                <Card title="Hard" value={stats.hard} />
+            {/* Tabs */}
+            <div className="border-b border-gray-200">
+                <div className="flex gap-4">
+                    <button
+                        onClick={() => setActiveTab('upload')}
+                        className={`pb-2 px-1 border-b-2 font-medium text-sm ${
+                            activeTab === 'upload'
+                                ? 'border-blue-600 text-blue-600'
+                                : 'border-transparent text-gray-500 hover:text-gray-700'
+                        }`}
+                    >
+                        Upload Questions
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('manage')}
+                        className={`pb-2 px-1 border-b-2 font-medium text-sm ${
+                            activeTab === 'manage'
+                                ? 'border-blue-600 text-blue-600'
+                                : 'border-transparent text-gray-500 hover:text-gray-700'
+                        }`}
+                    >
+                        Manage Exams
+                    </button>
+                </div>
             </div>
 
-            {/* Filters */}
-            <Card>
-                {/* Filter inputs - new */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <Select label="Subject" value={filters.subject_id} onChange={(e) => setFilters({ ...filters, subject_id: e.target.value })} />
-                    <Select label="Class" value={filters.class_level} onChange={(e) => setFilters({ ...filters, class_level: e.target.value })} options={CLASS_LEVELS.map(l => ({value: l, label: l}))} />
-                    <Select label="Difficulty" value={filters.difficulty_level} onChange={(e) => setFilters({ ...filters, difficulty_level: e.target.value })} options={DIFFICULTY_LEVELS.map(d => ({value: d, label: d.charAt(0).toUpperCase() + d.slice(1)}))} />
-                    <Input label="Search" value={filters.search} onChange={(e) => setFilters({ ...filters, search: e.target.value })} />
-                </div>
-            </Card>
+            {/* Upload Tab */}
+            {activeTab === 'upload' && (
+                <Card>
+                    <h3 className="text-lg font-semibold mb-4">Upload Questions via CSV</h3>
+                    <p className="text-sm text-gray-600 mb-4">
+                        Format: <code className="bg-gray-100 px-1 rounded">question_text,option_a,option_b,option_c,option_d,correct_answer</code>
+                    </p>
+                    <Button
+                        variant="primary"
+                        onClick={() => setIsCsvModalOpen(true)}
+                        className="w-full sm:w-auto"
+                    >
+                        <Upload className="mr-2 h-4 w-4" />
+                        Upload CSV
+                    </Button>
+                </Card>
+            )}
 
-            {/* Table (new single questions) */}
-            <Card>
-                <Table columns={columns} data={questions} loading={loading} emptyMessage="No questions found." />
-            </Card>
+            {/* Manage Tab */}
+            {activeTab === 'manage' && (
+                <Card>
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-semibold">Manage Exams</h3>
+                        <Select
+                            value={selectedClass}
+                            onChange={(e) => setSelectedClass(e.target.value)}
+                            options={[
+                                { value: '', label: 'All Classes' },
+                                ...CLASS_LEVELS.map((c) => ({ value: c, label: c }))
+                            ]}
+                            className="w-40"
+                        />
+                    </div>
 
-            {/* Exam Bank Section (old grouping/toggles) */}
-            <Card>
-                <h2 className="text-lg font-semibold mb-4">Exam Bank (Grouped by Subject/Class)</h2>
-                {questionsLoading ? (
-                    <p>Loading...</p>
-                ) : Object.keys(examGroups).length === 0 ? (
-                    <p>No exams found. Upload questions to see groups.</p>
-                ) : (
-                    <div className="space-y-4">
-                        {Object.values(examGroups).map((group) => {
-                            const key = `${group.subject}-${group.class}`;
-                            const isExpanded = expandedExams.has(key);
-                            return (
-                                <div key={key} className="border rounded-lg">
-                                    <div className="bg-gray-50 p-4 flex justify-between items-center cursor-pointer" onClick={() => toggleExamExpansion(key)}>
-                                        <div className="flex items-center gap-4">
-                                            <span>{group.subject} / {group.class}</span>
-                                            <Badge variant={group.is_active ? 'success' : 'error'}>{group.is_active ? 'Active' : 'Inactive'}</Badge>
-                                            <span>{group.questions.length} questions</span>
-                                        </div>
-                                        <Button variant="outline" onClick={(e) => { e.stopPropagation(); handleToggleExam(group.subject, group.class, group.is_active); }} loading={submitting}>
-                                            {group.is_active ? 'Deactivate' : 'Activate'}
-                                        </Button>
-                                    </div>
-                                    {isExpanded && (
-                                        <div className="p-4 space-y-2">
-                                            {group.questions.map((q, idx) => (
-                                                <div key={q.id || idx} className="text-sm border-b pb-2">
-                                                    <p>{`Q${idx + 1}: ${q.question_text}`}</p>
-                                                    <div className="text-xs text-gray-600">
-                                                        A: {q.option_a} | B: {q.option_b} | C: {q.option_c} | D: {q.option_d} | Correct: {q.correct_answer}
+                    {questionsLoading ? (
+                        <div className="text-center py-8">Loading exams...</div>
+                    ) : Object.keys(filteredExamGroups).length === 0 ? (
+                        <div className="text-center py-8 text-gray-500">
+                            No exams found. Upload questions to create exams.
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {Object.entries(filteredExamGroups).map(([key, group]) => {
+                                const isExpanded = expandedExams.has(key);
+                                return (
+                                    <div key={key} className="border rounded-lg overflow-hidden">
+                                        <div className="bg-gray-50 px-6 py-4">
+                                            <div className="flex items-center justify-between">
+                                                <div className="flex-1">
+                                                    <div className="flex items-center gap-3">
+                                                        <h4 className="font-semibold text-lg">{group.subject}</h4>
+                                                        <Badge variant="info">{group.class}</Badge>
+                                                        <Badge variant={group.is_active ? 'success' : 'default'}>
+                                                            {group.is_active ? 'Active' : 'Inactive'}
+                                                        </Badge>
+                                                        <span className="text-sm text-gray-600">
+                                                            {group.questions.length} questions • {group.duration_minutes} min
+                                                        </span>
                                                     </div>
                                                 </div>
-                                            ))}
+                                                <div className="flex items-center gap-2">
+                                                    <button
+                                                        onClick={() => handleToggleExam(group.subject, group.class, group.is_active)}
+                                                        disabled={loading}
+                                                        className={`p-2 rounded transition-colors ${
+                                                            group.is_active
+                                                                ? 'text-orange-600 hover:bg-orange-50'
+                                                                : 'text-green-600 hover:bg-green-50'
+                                                        }`}
+                                                        title={group.is_active ? 'Deactivate' : 'Activate'}
+                                                    >
+                                                        {group.is_active ? (
+                                                            <ToggleRight className="h-5 w-5" />
+                                                        ) : (
+                                                            <ToggleLeft className="h-5 w-5" />
+                                                        )}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => toggleExpand(key)}
+                                                        className="p-2 text-gray-600 hover:bg-gray-200 rounded"
+                                                    >
+                                                        <Eye className="h-5 w-5" />
+                                                    </button>
+                                                </div>
+                                            </div>
                                         </div>
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
-                )}
-            </Card>
 
-            {/* Add Modal (new single + old multi toggle) */}
-            <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="Add Question">
-                <div className="space-y-4">
-                    <Select label="Subject" value={manualQuestionMeta.subject} onChange={(e) => setManualQuestionMeta({ ...manualQuestionMeta, subject: e.target.value })} />
-                    <Select label="Class" value={manualQuestionMeta.class} onChange={(e) => setManualQuestionMeta({ ...manualQuestionMeta, class: e.target.value })} options={CLASS_LEVELS.map(l => ({value: l, label: l}))} />
-                    {/* Old multi form - toggle with radio if needed */}
-                    {questionsArray.map((q, idx) => (
-                        <div key={idx} className="border p-4 rounded">
-                            <Input placeholder="Question" value={q.text} onChange={(e) => updateQuestion(idx, 'text', e.target.value)} />
-                            <div className="grid grid-cols-2 gap-2">
-                                <Input placeholder="A" value={q.a} onChange={(e) => updateQuestion(idx, 'a', e.target.value)} />
-                                <Input placeholder="B" value={q.b} onChange={(e) => updateQuestion(idx, 'b', e.target.value)} />
-                                <Input placeholder="C" value={q.c} onChange={(e) => updateQuestion(idx, 'c', e.target.value)} />
-                                <Input placeholder="D" value={q.d} onChange={(e) => updateQuestion(idx, 'd', e.target.value)} />
-                            </div>
-                            <Select value={q.correct} onChange={(e) => updateQuestion(idx, 'correct', e.target.value)}>
-                                <option>A</option><option>B</option><option>C</option><option>D</option>
-                            </Select>
+                                        {isExpanded && (
+                                            <div className="divide-y divide-gray-200 max-h-96 overflow-y-auto">
+                                                {group.questions.map((q, idx) => (
+                                                    <div key={q.id || idx} className="px-6 py-4">
+                                                        <div className="text-sm font-medium mb-1">
+                                                            Q{idx + 1}: {q.question_text}
+                                                        </div>
+                                                        <div className="text-xs text-gray-600 space-y-1 ml-4">
+                                                            <div>A: {q.option_a}</div>
+                                                            <div>B: {q.option_b}</div>
+                                                            <div>C: {q.option_c}</div>
+                                                            <div>D: {q.option_d}</div>
+                                                            <div className="font-semibold text-green-600">
+                                                                Correct: {q.correct_answer}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
-                    ))}
-                    <Button type="button" onClick={addQuestionField}>Add Another Question</Button>
-                    <Button onClick={handleManualQuestions} loading={submitting}>Save Questions</Button>
-                </div>
-            </Modal>
+                    )}
+                    <p className="mt-4 text-xs text-gray-500 text-center">
+                        Toggle activates/deactivates the entire exam. Students see questions only when active.
+                    </p>
+                </Card>
+            )}
 
-            {/* Bulk Upload Modal (old CSV) */}
-            <Modal isOpen={isBulkUploadModalOpen} onClose={() => setIsBulkUploadModalOpen(false)} title="Upload Questions (CSV)">
+            {/* CSV Upload Modal */}
+            <Modal
+                isOpen={isCsvModalOpen}
+                onClose={() => {
+                    setIsCsvModalOpen(false);
+                    setUploadFile(null);
+                }}
+                title="CSV Upload"
+            >
                 <div className="space-y-4">
-                    <p>Format: question_text,option_a,option_b,option_c,option_d,correct_answer</p>
-                    <Select label="Subject" value={csvQuestionMeta.subject} onChange={(e) => setCsvQuestionMeta({ ...csvQuestionMeta, subject: e.target.value })} />
-                    <Select label="Class" value={csvQuestionMeta.class} onChange={(e) => setCsvQuestionMeta({ ...csvQuestionMeta, class: e.target.value })} options={CLASS_LEVELS.map(l => ({value: l, label: l}))} />
-                    <Input type="file" accept=".csv" onChange={handleFileChange} />
-                    <Button onClick={handleQuestionUpload} loading={uploading} disabled={!uploadFile || !csvQuestionMeta.subject || !csvQuestionMeta.class}>
-                        Upload
-                    </Button>
+                    <p className="text-sm text-gray-600">
+                        Format: <code className="bg-gray-100 px-1 rounded">question_text,option_a,option_b,option_c,option_d,correct_answer</code>
+                    </p>
+                    <Input
+                        label="Subject"
+                        value={csvMeta.subject}
+                        onChange={(e) => setCsvMeta({ ...csvMeta, subject: e.target.value })}
+                        placeholder="e.g., Mathematics"
+                        required
+                    />
+                    <Select
+                        label="Class"
+                        value={csvMeta.class}
+                        onChange={(e) => setCsvMeta({ ...csvMeta, class: e.target.value })}
+                        options={[{ value: '', label: 'Select' }, ...CLASS_LEVELS.map((c) => ({ value: c, label: c }))]}
+                        required
+                    />
+                    <div className="relative">
+                        <input id="csv-upload-file" type="file" accept=".csv" onChange={handleFileChange} className="hidden" />
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => triggerFileInput('csv-upload-file')}
+                            className="w-full"
+                        >
+                            <FileText className="mr-2 h-4 w-4" />
+                            {uploadFile ? `Selected: ${uploadFile.name}` : 'Choose CSV File'}
+                        </Button>
+                    </div>
+
+                    <div className="flex justify-end gap-3 pt-4">
+                        <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => {
+                                setIsCsvModalOpen(false);
+                                setUploadFile(null);
+                            }}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            onClick={handleCsvUpload}
+                            loading={submitting}
+                            disabled={!uploadFile || !csvMeta.subject || !csvMeta.class}
+                        >
+                            Upload Questions
+                        </Button>
+                    </div>
                 </div>
             </Modal>
-
-            {/* Delete Confirmation */}
-            <ConfirmDialog isOpen={isDeleteDialogOpen} onClose={() => setIsDeleteDialogOpen(false)} onConfirm={handleDeleteConfirm} title="Delete Question" message="Are you sure?" confirmText="Delete" type="danger" loading={submitting} />
         </div>
     );
 };
