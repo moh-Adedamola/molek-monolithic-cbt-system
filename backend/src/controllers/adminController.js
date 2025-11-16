@@ -2,6 +2,16 @@ const { getDb } = require('../utils/db');
 const { hashPassword } = require('../services/authService');
 const { generatePassword, generateExamCode } = require('../services/codeGenerator');
 const { parseCsvBuffer } = require('../services/csvService');
+const { logAudit, ACTIONS, getAuditLogs, getAuditStats } = require('../services/auditService');
+
+
+
+function getClientIp(req) {
+    return req.headers['x-forwarded-for']?.split(',')[0] ||
+        req.connection.remoteAddress ||
+        req.socket.remoteAddress ||
+        'unknown';
+}
 
 // ============================================
 // STUDENTS
@@ -27,9 +37,28 @@ async function createStudent(req, res) {
         `);
         stmt.run(first_name, middle_name || null, last_name, classLevel, student_id || null, examCode, passwordHash);
 
+        // Audit log
+        logAudit({
+            action: ACTIONS.STUDENT_CREATED,
+            userType: 'admin',
+            userIdentifier: 'admin',
+            details: `Created student: ${first_name} ${last_name} (${examCode}) for ${classLevel}`,
+            ipAddress: getClientIp(req),
+            status: 'success',
+            metadata: { class: classLevel, examCode }
+        });
+
         res.json({ exam_code: examCode, password });
     } catch (error) {
         console.error('Create student error:', error);
+        logAudit({
+            action: ACTIONS.STUDENT_CREATED,
+            userType: 'admin',
+            userIdentifier: 'admin',
+            details: `Failed to create student: ${error.message}`,
+            ipAddress: getClientIp(req),
+            status: 'failure'
+        });
         res.status(500).json({ error: 'Failed to create student' });
     } finally {
         if (db) db.close();
@@ -50,6 +79,7 @@ async function bulkCreateStudents(req, res) {
 
         db = getDb();
         const credentials = [];
+        let successCount = 0;
 
         for (const row of rows) {
             const firstName = row.first_name?.trim();
@@ -62,7 +92,7 @@ async function bulkCreateStudents(req, res) {
 
             const password = generatePassword();
             const passwordHash = await hashPassword(password);
-            const examCode = generateExamCode(classLevel, classLevel, Date.now());
+            const examCode = generateExamCode(classLevel, classLevel, Date.now() + successCount);
 
             const stmt = db.prepare(`
                 INSERT INTO students (first_name, middle_name, last_name, class, student_id, exam_code, password_hash)
@@ -71,7 +101,19 @@ async function bulkCreateStudents(req, res) {
             stmt.run(firstName, middleName, lastName, classLevel, studentId, examCode, passwordHash);
 
             credentials.push(`${firstName} ${lastName} | ${examCode} | ${password}`);
+            successCount++;
         }
+
+        // Audit log
+        logAudit({
+            action: ACTIONS.STUDENTS_BULK_UPLOADED,
+            userType: 'admin',
+            userIdentifier: 'admin',
+            details: `Bulk uploaded ${successCount} students`,
+            ipAddress: getClientIp(req),
+            status: 'success',
+            metadata: { count: successCount, totalRows: rows.length }
+        });
 
         const credentialsText = credentials.join('\n');
         res.setHeader('Content-Type', 'text/plain');
@@ -79,6 +121,14 @@ async function bulkCreateStudents(req, res) {
         res.send(credentialsText);
     } catch (error) {
         console.error('Bulk upload error:', error);
+        logAudit({
+            action: ACTIONS.STUDENTS_BULK_UPLOADED,
+            userType: 'admin',
+            userIdentifier: 'admin',
+            details: `Bulk upload failed: ${error.message}`,
+            ipAddress: getClientIp(req),
+            status: 'failure'
+        });
         res.status(500).json({ error: 'Bulk upload failed' });
     } finally {
         if (db) db.close();
@@ -119,6 +169,17 @@ function deleteStudentsByClass(req, res) {
         const stmt = db.prepare('DELETE FROM students WHERE class = ?');
         const result = stmt.run(classLevel);
 
+        // Audit log
+        logAudit({
+            action: ACTIONS.CLASS_DELETED,
+            userType: 'admin',
+            userIdentifier: 'admin',
+            details: `Deleted ${result.changes} students from ${classLevel}`,
+            ipAddress: getClientIp(req),
+            status: 'success',
+            metadata: { class: classLevel, deletedCount: result.changes }
+        });
+
         res.json({ message: `Deleted ${result.changes} students from ${classLevel}` });
     } catch (error) {
         console.error('Delete class error:', error);
@@ -145,6 +206,17 @@ function exportStudentsByClass(req, res) {
             ORDER BY last_name, first_name
         `);
         const students = stmt.all(classLevel);
+
+        // Audit log
+        logAudit({
+            action: ACTIONS.STUDENTS_EXPORTED,
+            userType: 'admin',
+            userIdentifier: 'admin',
+            details: `Exported ${students.length} students from ${classLevel}`,
+            ipAddress: getClientIp(req),
+            status: 'success',
+            metadata: { class: classLevel, count: students.length }
+        });
 
         const csvHeader = 'first_name,middle_name,last_name,class,student_id,exam_code\n';
         const csvRows = students.map(s =>
@@ -219,9 +291,28 @@ async function uploadQuestions(req, res) {
             count++;
         }
 
+        // Audit log
+        logAudit({
+            action: ACTIONS.QUESTIONS_UPLOADED,
+            userType: 'admin',
+            userIdentifier: 'admin',
+            details: `Uploaded ${count} questions for ${subject} - ${classLevel}`,
+            ipAddress: getClientIp(req),
+            status: 'success',
+            metadata: { subject, class: classLevel, questionCount: count }
+        });
+
         res.json({ message: `Uploaded ${count} questions for ${subject} - ${classLevel}` });
     } catch (error) {
         console.error('Upload questions error:', error);
+        logAudit({
+            action: ACTIONS.QUESTIONS_UPLOADED,
+            userType: 'admin',
+            userIdentifier: 'admin',
+            details: `Failed to upload questions: ${error.message}`,
+            ipAddress: getClientIp(req),
+            status: 'failure'
+        });
         res.status(500).json({ error: 'Failed to upload questions' });
     } finally {
         if (db) db.close();
@@ -265,6 +356,17 @@ function activateExam(req, res) {
         if (result.changes === 0) {
             return res.status(404).json({ error: 'Exam not found' });
         }
+
+        // Audit log
+        logAudit({
+            action: is_active ? ACTIONS.EXAM_ACTIVATED : ACTIONS.EXAM_DEACTIVATED,
+            userType: 'admin',
+            userIdentifier: 'admin',
+            details: `${is_active ? 'Activated' : 'Deactivated'} exam: ${subject} - ${classLevel}`,
+            ipAddress: getClientIp(req),
+            status: 'success',
+            metadata: { subject, class: classLevel, isActive: is_active }
+        });
 
         res.json({ message: `Exam ${is_active ? 'activated' : 'deactivated'}` });
     } catch (error) {
@@ -360,6 +462,17 @@ function updateExam(req, res) {
             return res.status(404).json({ error: 'Exam not found' });
         }
 
+        // Audit log
+        logAudit({
+            action: ACTIONS.EXAM_UPDATED,
+            userType: 'admin',
+            userIdentifier: 'admin',
+            details: `Updated exam duration to ${duration_minutes} minutes (ID: ${id})`,
+            ipAddress: getClientIp(req),
+            status: 'success',
+            metadata: { examId: id, durationMinutes: duration_minutes }
+        });
+
         res.json({ message: 'Exam updated successfully' });
     } catch (error) {
         console.error('Update exam error:', error);
@@ -375,11 +488,28 @@ function deleteExam(req, res) {
         const { id } = req.params;
         db = getDb();
 
+        // Get exam details before deleting
+        const examStmt = db.prepare('SELECT subject, class FROM exams WHERE id = ?');
+        const exam = examStmt.get(id);
+
         const stmt = db.prepare('DELETE FROM exams WHERE id = ?');
         const result = stmt.run(id);
 
         if (result.changes === 0) {
             return res.status(404).json({ error: 'Exam not found' });
+        }
+
+        // Audit log
+        if (exam) {
+            logAudit({
+                action: ACTIONS.EXAM_DELETED,
+                userType: 'admin',
+                userIdentifier: 'admin',
+                details: `Deleted exam: ${exam.subject} - ${exam.class}`,
+                ipAddress: getClientIp(req),
+                status: 'success',
+                metadata: { examId: id, subject: exam.subject, class: exam.class }
+            });
         }
 
         res.json({ message: 'Exam deleted successfully' });
@@ -687,12 +817,45 @@ function getActiveExamSessions(req, res) {
     }
 }
 
+function getAuditLogsController(req, res) {
+    try {
+        const filters = {
+            action: req.query.action,
+            userType: req.query.userType,
+            status: req.query.status,
+            fromDate: req.query.fromDate,
+            toDate: req.query.toDate,
+            search: req.query.search,
+            limit: req.query.limit || 100
+        };
+
+        const logs = getAuditLogs(filters);
+        res.json({ logs });
+    } catch (error) {
+        console.error('Get audit logs error:', error);
+        res.status(500).json({ error: 'Failed to get audit logs' });
+    }
+}
+
+function getAuditStatsController(req, res) {
+    try {
+        const stats = getAuditStats();
+        res.json(stats);
+    } catch (error) {
+        console.error('Get audit stats error:', error);
+        res.status(500).json({ error: 'Failed to get audit stats' });
+    }
+}
+
 module.exports = {
+    // Students
     createStudent,
     bulkCreateStudents,
     getClasses,
     deleteStudentsByClass,
     exportStudentsByClass,
+
+    // Questions & Exams
     uploadQuestions,
     getAllQuestions,
     activateExam,
@@ -701,10 +864,20 @@ module.exports = {
     updateExam,
     deleteExam,
     getSubjects,
+
+    // Results
     getClassResults,
     exportClassResultsAsText,
     getFilteredResults,
+
+    // Dashboard
     getDashboardStats,
     getRecentSubmissions,
-    getActiveExamSessions
+
+    // Monitoring
+    getActiveExamSessions,
+
+    // Audit Logs
+    getAuditLogsController,
+    getAuditStatsController
 };

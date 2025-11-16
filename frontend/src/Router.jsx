@@ -20,6 +20,8 @@ import UserManagement from "./pages/admin/UserManagement";
 import ExamMonitoring from "./pages/admin/ExamMonitoring";
 import Reports from "./pages/admin/Reports";
 import AuditLogs from "./pages/admin/AuditLogs";
+import ArchiveManagement from "./pages/admin/ArchiveManagement";
+import NetworkInfo from "./pages/admin/NetworkInfo";
 import SystemSettings from "./pages/admin/SystemSettings";
 
 const Router = () => {
@@ -49,6 +51,8 @@ const Router = () => {
                 <Route path="reports" element={<Reports />} />
                 <Route path="audit-logs" element={<AuditLogs />} />
                 <Route path="settings" element={<SystemSettings />} />
+                <Route path="archive" element={<ArchiveManagement />} />
+                <Route path="network" element={<NetworkInfo />} />
             </Route>
 
             {/* ---------------- CATCH-ALL REDIRECT ---------------- */}

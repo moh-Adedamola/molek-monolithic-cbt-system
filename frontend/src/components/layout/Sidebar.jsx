@@ -12,14 +12,16 @@ import {
     Settings,
     Shield,
     Menu,
-    X,
+    Archive,
+    X, Network,
 } from "lucide-react";
 import clsx from "clsx";
 
 const Sidebar = ({ isOpen, setIsOpen }) => {
     const navigationItems = [
         { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, path: "/admin" },
-        // { id: "users", label: "User Management", icon: Users, path: "/admin/users" },
+        { id: "Archive", label: "Archive Management", icon: Archive, path: "/admin/archive" },
+        { id: "Network", label: "Network Setup", icon: Network, path: "/admin/network" },
         { id: "students", label: "Student Management", icon: GraduationCap, path: "/admin/students" },
         { id: "subjects", label: "Subject Management", icon: BookOpen, path: "/admin/subjects" },
         { id: "questions", label: "Question Bank", icon: FileQuestion, path: "/admin/questions" },

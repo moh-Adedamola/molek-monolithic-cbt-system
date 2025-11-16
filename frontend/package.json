@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@rolldown/pluginutils": "^1.0.0-beta.47",
+    "@tailwindcss/node": "^4.1.17",
     "@tailwindcss/vite": "^4.1.17",
     "axios": "^1.13.2",
     "clsx": "^2.1.1",

@@ -1,0 +1,7 @@
+# This file ensures node_modules IS included when packaging
+# electron-builder respects .npmignore
+
+# Only ignore development files
+.env
+*.log
+.DS_Store

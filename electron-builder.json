@@ -1,0 +1,43 @@
+{
+  "appId": "com.molek.cbt",
+  "productName": "Molek CBT System",
+  "copyright": "Copyright © 2025 Molek School",
+  "directories": {
+    "output": "dist-electron",
+    "buildResources": "electron/resources"
+  },
+  "files": [
+    "electron/**/*",
+    "frontend/dist/**/*",
+    "package.json"
+  ],
+  "afterPack": "./afterPack.js",
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "electron/icon.ico",
+    "verifyUpdateCodeSignature": false
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "allowElevation": true,
+    "installerIcon": "electron/icon.ico",
+    "uninstallerIcon": "electron/icon.ico",
+    "installerHeaderIcon": "electron/icon.ico",
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Molek CBT System",
+    "runAfterFinish": true,
+    "perMachine": true,
+    "deleteAppDataOnUninstall": false
+  },
+  "publish": {
+    "provider": "generic",
+    "url": "https://github.com/moh-Adedamola/molek-monolithic-cbt-system/releases/latest"
+  }
+}

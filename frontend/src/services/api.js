@@ -77,4 +77,29 @@ export const getRecentSubmissions = (params = {}) =>
 // ============================================
 export const getActiveExamSessions = () => API.get('/admin/monitoring/sessions');
 
+
+// ============================================
+// ADMIN: AUDIT
+// ============================================
+
+export const getAuditLogs = (params = {}) =>
+    API.get('/admin/audit-logs', { params });
+
+export const getAuditStats = () =>
+    API.get('/admin/audit-logs/stats');
+
+
+// Archive Management
+export const archiveTerm = (termName) =>
+    API.post('/admin/archive/archive', { termName });
+
+export const resetDatabase = () =>
+    API.post('/admin/archive/reset');
+
+export const listArchives = () =>
+    API.get('/admin/archive/list');
+
+export const getArchivesPath = () =>
+    API.get('/admin/archive/path');
+
 export default API;

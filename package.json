@@ -1,17 +1,37 @@
 {
   "name": "molek-cbt",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "workspaces": ["frontend", "backend"],
+  "description": "Offline CBT Examination System for Schools",
+  "main": "electron/main.js",
+  "author": "dev by tbelzbby",
+  "license": "MIT",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
   "scripts": {
-    "dev": "concurrently \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\""
+    "install-all": "npm install && npm install --workspace backend && npm install --workspace frontend",
+    "dev": "concurrently \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\"",
+    "dev:backend": "npm run dev --workspace backend",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "dev:electron": "cross-env NODE_ENV=development electron electron/main.js",
+    "build:frontend": "npm run build --workspace frontend",
+    "build:backend": "echo Backend ready for packaging",
+    "build": "npm run build:frontend && npm run build:backend",
+    "package": "npm run build && npx electron-builder@24.9.1 --win --x64 --config electron-builder.json",
+    "package:dir": "npm run build && npx electron-builder@24.9.1 --win --x64 --dir --config electron-builder.json",
+    "test:electron": "cross-env NODE_ENV=development electron electron/main.js",
+    "clean": "rimraf dist-electron dist frontend/dist backend/node_modules/.cache"
   },
   "dependencies": {
     "concurrently": "^9.2.1"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs"
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "electron": "28.0.0",
+    "electron-builder": "24.9.1",
+    "fs-extra": "^11.3.2",
+    "normalize-path": "^3.0.0",
+    "wait-on": "^7.2.0"
+  }
 }
