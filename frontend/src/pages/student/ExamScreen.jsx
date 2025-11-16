@@ -83,7 +83,8 @@ export default function ExamScreen() {
             localStorage.removeItem('examDuration');
 
             // Show success modal
-            alert(`Exam Submitted Successfully!\n\nScore: ${res.data.score}/${res.data.total}\nPercentage: ${res.data.percentage}%`);
+            // alert(`Exam Submitted Successfully!\n\nScore: ${res.data.score}/${res.data.total}\nPercentage: ${res.data.percentage}%`);
+            alert(`Exam Submitted Successfully!\n\nScore:`);
             navigate('/');
         } catch (err) {
             console.error('Submit error:', err);
