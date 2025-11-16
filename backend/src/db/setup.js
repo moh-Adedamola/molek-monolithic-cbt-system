@@ -17,6 +17,7 @@ db.exec(`
         student_id TEXT,
         exam_code TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
+        plain_password TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 

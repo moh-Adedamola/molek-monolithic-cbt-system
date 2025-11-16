@@ -5,10 +5,10 @@ const API = axios.create({ baseURL: '/api' });
 // ============================================
 // STUDENT ENDPOINTS
 // ============================================
-export const studentLogin = (data) => API.post('/student/login', data);
-export const submitExam = (data) => API.post('/student/submit', data);
+export const studentLogin = (data) => API.post('/students/login', data);
+export const submitExam = (data) => API.post('/students/submit', data);
 export const getExamQuestions = (subject, examCode) =>
-    API.get(`/student/exam/${subject}`, { params: { exam_code: examCode } });
+    API.get(`/students/exam/${subject}`, { params: { exam_code: examCode } });
 
 // ============================================
 // ADMIN: STUDENTS

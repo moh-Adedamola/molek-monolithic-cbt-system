@@ -30,12 +30,21 @@ async function createStudent(req, res) {
         const passwordHash = await hashPassword(password);
         const examCode = generateExamCode(classLevel, classLevel, Date.now());
 
+        console.log('🔐 Creating student:');
+        console.log('   Name:', first_name, middle_name, last_name);
+        console.log('   Class:', classLevel);
+        console.log('   Exam Code:', examCode);
+        console.log('   Plain Password:', password);
+        console.log('   Password Hash:', passwordHash.substring(0, 20) + '...');
+
         db = getDb();
         const stmt = db.prepare(`
-            INSERT INTO students (first_name, middle_name, last_name, class, student_id, exam_code, password_hash)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO students (first_name, middle_name, last_name, class, student_id, exam_code, password_hash, plain_password)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `);
-        stmt.run(first_name, middle_name || null, last_name, classLevel, student_id || null, examCode, passwordHash);
+        const result = stmt.run(first_name, middle_name || null, last_name, classLevel, student_id || null, examCode, passwordHash, password);
+
+        console.log('✅ Student created with ID:', result.lastInsertRowid);
 
         // Audit log
         logAudit({
@@ -50,7 +59,7 @@ async function createStudent(req, res) {
 
         res.json({ exam_code: examCode, password });
     } catch (error) {
-        console.error('Create student error:', error);
+        console.error('❌ Create student error:', error);
         logAudit({
             action: ACTIONS.STUDENT_CREATED,
             userType: 'admin',
@@ -81,6 +90,8 @@ async function bulkCreateStudents(req, res) {
         const credentials = [];
         let successCount = 0;
 
+        console.log(`📥 Starting bulk upload of ${rows.length} students...`);
+
         for (const row of rows) {
             const firstName = row.first_name?.trim();
             const lastName = row.last_name?.trim();
@@ -95,14 +106,18 @@ async function bulkCreateStudents(req, res) {
             const examCode = generateExamCode(classLevel, classLevel, Date.now() + successCount);
 
             const stmt = db.prepare(`
-                INSERT INTO students (first_name, middle_name, last_name, class, student_id, exam_code, password_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO students (first_name, middle_name, last_name, class, student_id, exam_code, password_hash, plain_password)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `);
-            stmt.run(firstName, middleName, lastName, classLevel, studentId, examCode, passwordHash);
+            stmt.run(firstName, middleName, lastName, classLevel, studentId, examCode, passwordHash, password);
+
+            console.log(`✅ Student ${successCount + 1}: ${firstName} ${lastName} | ${examCode} | ${password}`);
 
             credentials.push(`${firstName} ${lastName} | ${examCode} | ${password}`);
             successCount++;
         }
+
+        console.log(`✅ Bulk upload complete: ${successCount} students created`);
 
         // Audit log
         logAudit({
@@ -120,7 +135,7 @@ async function bulkCreateStudents(req, res) {
         res.setHeader('Content-Disposition', 'attachment; filename=student_credentials.txt');
         res.send(credentialsText);
     } catch (error) {
-        console.error('Bulk upload error:', error);
+        console.error('❌ Bulk upload error:', error);
         logAudit({
             action: ACTIONS.STUDENTS_BULK_UPLOADED,
             userType: 'admin',
@@ -200,12 +215,14 @@ function exportStudentsByClass(req, res) {
 
         db = getDb();
         const stmt = db.prepare(`
-            SELECT first_name, middle_name, last_name, class, student_id, exam_code
+            SELECT first_name, middle_name, last_name, class, student_id, exam_code, plain_password
             FROM students
             WHERE class = ?
             ORDER BY last_name, first_name
         `);
         const students = stmt.all(classLevel);
+
+        console.log(`📥 Exporting ${students.length} students from ${classLevel} with passwords`);
 
         // Audit log
         logAudit({
@@ -218,9 +235,9 @@ function exportStudentsByClass(req, res) {
             metadata: { class: classLevel, count: students.length }
         });
 
-        const csvHeader = 'first_name,middle_name,last_name,class,student_id,exam_code\n';
+        const csvHeader = 'first_name,middle_name,last_name,class,student_id,exam_code,password\n';
         const csvRows = students.map(s =>
-            `${s.first_name},${s.middle_name || ''},${s.last_name},${s.class},${s.student_id || ''},${s.exam_code}`
+            `${s.first_name},${s.middle_name || ''},${s.last_name},${s.class},${s.student_id || ''},${s.exam_code},${s.plain_password || 'N/A'}`
         ).join('\n');
 
         const csv = csvHeader + csvRows;
@@ -229,7 +246,7 @@ function exportStudentsByClass(req, res) {
         res.setHeader('Content-Disposition', `attachment; filename=${classLevel}_students.csv`);
         res.send(csv);
     } catch (error) {
-        console.error('Export students error:', error);
+        console.error('❌ Export students error:', error);
         res.status(500).json({ error: 'Failed to export students' });
     } finally {
         if (db) db.close();
