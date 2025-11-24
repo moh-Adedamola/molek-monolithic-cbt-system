@@ -110,14 +110,14 @@ app.use((err, req, res, next) => {
 
 // Start server
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log('═══════════════════════════════════════════');
+    console.log('╔════════════════════════════════════════╗');
     console.log('🚀 Molek CBT Backend Server');
-    console.log('═══════════════════════════════════════════');
+    console.log('╚════════════════════════════════════════╝');
     console.log(`📡 Server running on port ${PORT}`);
     console.log(`🌐 Local: http://localhost:${PORT}`);
     console.log(`🌐 Network: http://0.0.0.0:${PORT}`);
     console.log(`⚙️  Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log('═══════════════════════════════════════════');
+    console.log('╚════════════════════════════════════════╝');
 }).on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
         console.error(`❌ Port ${PORT} is already in use!`);
@@ -159,4 +159,5 @@ process.on('unhandledRejection', (reason, promise) => {
     // Don't exit in production, just log
 });
 
-module.exports = app;
+// ✅ CRITICAL FIX: Export the server instance, not the app
+module.exports = server;

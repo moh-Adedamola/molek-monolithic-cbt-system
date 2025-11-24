@@ -60,60 +60,159 @@ exports.default = async function(context) {
     // Create backend node_modules
     await fs.ensureDir(backendNodeModules);
     
+    // ✅ CRITICAL FIX: Filter function to skip symlinks and workspace references
+    const isValidPackage = async (srcPath) => {
+        try {
+            // Check if path exists
+            if (!await fs.pathExists(srcPath)) {
+                return false;
+            }
+            
+            // Get stats, following symlinks
+            const stats = await fs.lstat(srcPath);
+            
+            // Skip symlinks (workspace links)
+            if (stats.isSymbolicLink()) {
+                return false;
+            }
+            
+            // Must be a directory
+            if (!stats.isDirectory()) {
+                return false;
+            }
+            
+            return true;
+        } catch (error) {
+            console.warn(`   ⚠️  Error checking ${path.basename(srcPath)}:`, error.message);
+            return false;
+        }
+    };
+    
     // Copy each backend dependency from root node_modules
     let copiedCount = 0;
+    let skippedCount = 0;
     let missingCount = 0;
     
     for (const dep of Object.keys(backendDeps)) {
         const srcDep = path.join(rootNodeModules, dep);
         const destDep = path.join(backendNodeModules, dep);
         
-        if (await fs.pathExists(srcDep)) {
-            await fs.copy(srcDep, destDep);
-            copiedCount++;
-        } else {
-            console.warn(`   ⚠️  Missing dependency: ${dep}`);
-            missingCount++;
-        }
-    }
-    
-    // Also copy all dependencies of dependencies (nested)
-    console.log('📦 Copying nested dependencies...');
-    const allPackages = await fs.readdir(rootNodeModules);
-    
-    for (const pkg of allPackages) {
-        if (pkg.startsWith('.') || pkg.startsWith('@')) continue;
-        
-        const srcPkg = path.join(rootNodeModules, pkg);
-        const destPkg = path.join(backendNodeModules, pkg);
-        
-        // Only copy if not already copied and exists
-        if (!await fs.pathExists(destPkg) && await fs.pathExists(srcPkg)) {
-            const stat = await fs.stat(srcPkg);
-            if (stat.isDirectory()) {
-                await fs.copy(srcPkg, destPkg);
+        if (await isValidPackage(srcDep)) {
+            try {
+                await fs.copy(srcDep, destDep, {
+                    // Additional filter to skip symlinks inside packages
+                    filter: async (src) => {
+                        try {
+                            const stats = await fs.lstat(src);
+                            return !stats.isSymbolicLink();
+                        } catch (error) {
+                            return true; // If we can't check, try to copy
+                        }
+                    }
+                });
                 copiedCount++;
+            } catch (error) {
+                console.warn(`   ⚠️  Failed to copy ${dep}:`, error.message);
+                skippedCount++;
+            }
+        } else {
+            const stats = await fs.lstat(srcDep).catch(() => null);
+            if (stats && stats.isSymbolicLink()) {
+                console.log(`   ⏭️  Skipping symlink: ${dep}`);
+                skippedCount++;
+            } else {
+                console.warn(`   ⚠️  Missing dependency: ${dep}`);
+                missingCount++;
             }
         }
     }
     
-    // Handle @scoped packages
+    // Also copy all dependencies of dependencies (nested) - but skip workspace links
+    console.log('📦 Copying nested dependencies...');
+    const allPackages = await fs.readdir(rootNodeModules);
+    
+    for (const pkg of allPackages) {
+        // Skip hidden files, already copied packages, and workspace names
+        if (pkg.startsWith('.') || 
+            pkg === 'frontend' || 
+            pkg === 'backend' || 
+            pkg === 'electron') {
+            continue;
+        }
+        
+        const srcPkg = path.join(rootNodeModules, pkg);
+        const destPkg = path.join(backendNodeModules, pkg);
+        
+        // Only copy if not already copied, is valid, and not a symlink
+        if (!await fs.pathExists(destPkg) && await isValidPackage(srcPkg)) {
+            try {
+                await fs.copy(srcPkg, destPkg, {
+                    filter: async (src) => {
+                        try {
+                            const stats = await fs.lstat(src);
+                            return !stats.isSymbolicLink();
+                        } catch (error) {
+                            return true;
+                        }
+                    }
+                });
+                copiedCount++;
+            } catch (error) {
+                console.warn(`   ⚠️  Failed to copy ${pkg}:`, error.message);
+                skippedCount++;
+            }
+        }
+    }
+    
+    // Handle @scoped packages - but skip symlinks
     const scopedDirs = allPackages.filter(p => p.startsWith('@'));
     for (const scopedDir of scopedDirs) {
         const srcScoped = path.join(rootNodeModules, scopedDir);
         const destScoped = path.join(backendNodeModules, scopedDir);
         
-        if (await fs.pathExists(srcScoped)) {
-            await fs.copy(srcScoped, destScoped);
+        if (await isValidPackage(srcScoped)) {
+            try {
+                // Ensure scoped directory exists
+                await fs.ensureDir(destScoped);
+                
+                // Copy each package in the scoped directory
+                const scopedPackages = await fs.readdir(srcScoped);
+                for (const scopedPkg of scopedPackages) {
+                    const srcPkg = path.join(srcScoped, scopedPkg);
+                    const destPkg = path.join(destScoped, scopedPkg);
+                    
+                    if (await isValidPackage(srcPkg)) {
+                        try {
+                            await fs.copy(srcPkg, destPkg, {
+                                filter: async (src) => {
+                                    try {
+                                        const stats = await fs.lstat(src);
+                                        return !stats.isSymbolicLink();
+                                    } catch (error) {
+                                        return true;
+                                    }
+                                }
+                            });
+                            copiedCount++;
+                        } catch (error) {
+                            console.warn(`   ⚠️  Failed to copy ${scopedDir}/${scopedPkg}:`, error.message);
+                            skippedCount++;
+                        }
+                    }
+                }
+            } catch (error) {
+                console.warn(`   ⚠️  Failed to process scoped directory ${scopedDir}:`, error.message);
+            }
         }
     }
     
     console.log('✅ Backend copy complete!');
     console.log('   Copied:', copiedCount, 'packages');
+    console.log('   Skipped:', skippedCount, 'packages (symlinks/workspace links)');
     console.log('   Missing:', missingCount, 'packages');
     
     if (copiedCount === 0) {
-        throw new Error('Failed to copy any packages!');
+        throw new Error('Failed to copy any packages! Check if node_modules exists.');
     }
     
     console.log(`✅ Successfully packaged backend with dependencies`);
