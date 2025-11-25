@@ -4,7 +4,7 @@ const fs = require('fs');
 const isDev = process.env.NODE_ENV === 'development';
 
 let mainWindow;
-let backendServer; // Changed from backendProcess to backendServer
+let backendServer; // This will hold the spawned process
 
 // Paths configuration
 const paths = {
@@ -46,7 +46,7 @@ function initializePaths() {
             fs.mkdirSync(paths.uploads, { recursive: true });
         }
 
-        console.log('📁 Paths initialized:');
+        console.log('Paths initialized:');
         console.log('   Mode:', isDev ? 'DEVELOPMENT' : 'PRODUCTION');
         console.log('   Backend:', paths.backend);
         console.log('   Database:', paths.database);
@@ -64,11 +64,11 @@ async function runFirstTimeSetup() {
     const setupMarker = path.join(paths.userData, '.setup-complete');
 
     if (fs.existsSync(setupMarker)) {
-        console.log('✅ Setup already completed');
+        console.log('Setup already completed');
         return true;
     }
 
-    console.log('🎉 Running first-time setup...');
+    console.log('Running first-time setup...');
 
     try {
         // Copy database to user data (production only)
@@ -77,10 +77,10 @@ async function runFirstTimeSetup() {
             const targetDb = path.join(paths.database, 'cbt.db');
 
             if (fs.existsSync(sourceDb) && !fs.existsSync(targetDb)) {
-                console.log('📋 Copying database to user data...');
+                console.log('Copying database to user data...');
                 fs.copyFileSync(sourceDb, targetDb);
             } else if (!fs.existsSync(sourceDb)) {
-                console.log('⚠️ Source database not found, creating new one...');
+                console.log('Source database not found, creating new one...');
                 // Database will be created automatically by backend on first run
             }
         }
@@ -91,10 +91,10 @@ async function runFirstTimeSetup() {
             version: app.getVersion()
         }));
 
-        console.log('✅ Setup completed successfully!');
+        console.log('Setup completed successfully!');
         return true;
     } catch (error) {
-        console.error('❌ Setup failed:', error);
+        console.error('Setup failed:', error);
 
         dialog.showErrorBox(
             'Setup Failed',
@@ -108,58 +108,108 @@ async function runFirstTimeSetup() {
 }
 
 /**
- * Start backend server - RUNS DIRECTLY IN ELECTRON PROCESS
+ * Start backend server - USES SYSTEM NODE.JS
  */
 async function startBackend() {
+    const { spawn } = require('child_process');
+
     // Database path based on environment
     const dbPath = isDev
         ? path.join(paths.backend, 'src/db/cbt.db')
         : path.join(paths.database, 'cbt.db');
 
-    console.log('🚀 Starting backend server...');
+    console.log('Starting backend server...');
     console.log('   Backend path:', paths.backend);
     console.log('   Database path:', dbPath);
     console.log('   Archives path:', paths.archives);
     console.log('   Uploads path:', paths.uploads);
 
-    // Set environment variables for backend
-    process.env.PORT = '5000';
-    process.env.DB_PATH = dbPath;
-    process.env.ARCHIVES_PATH = paths.archives;
-    process.env.UPLOADS_PATH = paths.uploads;
-    process.env.NODE_ENV = isDev ? 'development' : 'production';
+    const serverPath = path.join(paths.backend, 'src/server.js');
+
+    console.log('   Server path:', serverPath);
+    console.log('   Server exists?:', fs.existsSync(serverPath));
+
+    if (!fs.existsSync(serverPath)) {
+        dialog.showErrorBox(
+            'Backend Not Found',
+            'Backend server file not found at:\n' + serverPath + '\n\n' +
+            'Please reinstall the application.'
+        );
+        return false;
+    }
 
     try {
-        // Change working directory to backend folder
-        process.chdir(paths.backend);
-        
-        // ✅ REQUIRE AND START THE BACKEND DIRECTLY (NOT AS SEPARATE PROCESS)
-        const serverPath = path.join(paths.backend, 'src/server.js');
-        
-        console.log('📦 Loading backend module...');
-        console.log('   Server path:', serverPath);
-        console.log('   Server exists?:', fs.existsSync(serverPath));
+        // Spawn Node.js process using system's Node.js
+        console.log('Spawning Node.js process...');
 
-        if (!fs.existsSync(serverPath)) {
-            throw new Error(`Server file not found at: ${serverPath}`);
-        }
+        backendServer = spawn('node', [serverPath], {
+            cwd: paths.backend,
+            env: {
+                ...process.env,
+                PORT: '5000',
+                DB_PATH: dbPath,
+                ARCHIVES_PATH: paths.archives,
+                UPLOADS_PATH: paths.uploads,
+                NODE_ENV: isDev ? 'development' : 'production'
+            },
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
 
-        // Import and start the backend
-        backendServer = require(serverPath);
-        
-        console.log('✅ Backend server started successfully!');
+        // Log backend output
+        backendServer.stdout.on('data', (data) => {
+            console.log(`[Backend] ${data.toString().trim()}`);
+        });
+
+        backendServer.stderr.on('data', (data) => {
+            console.error(`[Backend Error] ${data.toString().trim()}`);
+        });
+
+        backendServer.on('error', (error) => {
+            console.error('Failed to start backend process:', error);
+
+            if (error.code === 'ENOENT') {
+                dialog.showErrorBox(
+                    'Node.js Not Found',
+                    'Node.js is not installed or not found in system PATH.\n\n' +
+                    'Please install Node.js from https://nodejs.org\n' +
+                    'Version 18.x or higher is required.\n\n' +
+                    'After installation, restart your computer.'
+                );
+            } else {
+                dialog.showErrorBox(
+                    'Backend Start Failed',
+                    'Failed to start the backend server:\n\n' + error.message
+                );
+            }
+        });
+
+        backendServer.on('close', (code) => {
+            console.log(`[Backend] Process exited with code ${code}`);
+
+            if (code !== 0 && code !== null) {
+                dialog.showMessageBox({
+                    type: 'error',
+                    title: 'Backend Stopped',
+                    message: 'The backend server stopped unexpectedly.',
+                    detail: `Exit code: ${code}\n\nThe application may not function correctly.`
+                });
+            }
+        });
+
+        console.log('Backend process spawned successfully!');
+        console.log('   Process PID:', backendServer.pid);
         return true;
+
     } catch (error) {
-        console.error('❌ Failed to start backend:', error);
-        
+        console.error('Failed to start backend:', error);
+
         dialog.showErrorBox(
             'Backend Start Failed',
-            'Failed to start the backend server:\n\n' + 
+            'Failed to start the backend server:\n\n' +
             error.message + '\n\n' +
-            'Backend path: ' + paths.backend + '\n\n' +
-            'Please contact technical support.'
+            'Please ensure Node.js is installed correctly.'
         );
-        
+
         return false;
     }
 }
@@ -195,14 +245,14 @@ function createWindow() {
         ? 'http://localhost:3000/admin'  // Vite dev server
         : 'http://localhost:5000/admin';  // Backend serves admin in production
 
-    console.log('🌐 Loading URL:', startURL);
+    console.log('Loading URL:', startURL);
 
     mainWindow.loadURL(startURL);
 
     // Show window when ready
     mainWindow.once('ready-to-show', () => {
         mainWindow.show();
-        console.log('✅ Main window shown');
+        console.log('Main window shown');
 
         // Open DevTools in development only
         if (isDev) {
@@ -275,11 +325,11 @@ ipcMain.handle('open-archives-folder', () => {
  * App lifecycle events
  */
 app.on('ready', async () => {
-    console.log('╔════════════════════════════════════════╗');
-    console.log('🚀 Molek CBT System Starting...');
+    console.log('========================================');
+    console.log('Molek CBT System Starting...');
     console.log('   Version:', app.getVersion());
     console.log('   Environment:', isDev ? 'Development' : 'Production');
-    console.log('╚════════════════════════════════════════╝');
+    console.log('========================================');
 
     initializePaths();
 
@@ -291,14 +341,14 @@ app.on('ready', async () => {
 
     const backendStarted = await startBackend();
     if (!backendStarted) {
-        console.error('❌ Backend failed to start, quitting...');
+        console.error('Backend failed to start, quitting...');
         app.quit();
         return;
     }
 
     // Wait for backend to fully initialize
     const waitTime = isDev ? 2000 : 3000;
-    console.log(`⏳ Waiting ${waitTime}ms for backend to initialize...`);
+    console.log(`Waiting ${waitTime}ms for backend to initialize...`);
 
     setTimeout(() => {
         createWindow();
@@ -306,8 +356,17 @@ app.on('ready', async () => {
 });
 
 app.on('window-all-closed', () => {
-    console.log('📚 All windows closed');
-    app.quit();
+    console.log('All windows closed');
+
+    // Kill backend process
+    if (backendServer) {
+        console.log('Stopping backend server...');
+        backendServer.kill();
+    }
+
+    if (process.platform !== 'darwin') {
+        app.quit();
+    }
 });
 
 app.on('activate', () => {
@@ -317,12 +376,16 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', () => {
-    console.log('🛑 Application quitting...');
-    // Backend will automatically close when the process exits
+    console.log('Application quitting...');
+
+    // Kill backend process
+    if (backendServer) {
+        backendServer.kill();
+    }
 });
 
 process.on('uncaughtException', (error) => {
-    console.error('💥 Uncaught Exception:', error);
+    console.error('Uncaught Exception:', error);
 
     if (!isDev) {
         fs.appendFileSync(
@@ -338,8 +401,8 @@ process.on('uncaughtException', (error) => {
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
-    
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+
     if (!isDev) {
         fs.appendFileSync(
             path.join(app.getPath('userData'), 'error.log'),
@@ -348,4 +411,4 @@ process.on('unhandledRejection', (reason, promise) => {
     }
 });
 
-console.log('✅ Main process initialized');
+console.log('Main process initialized');
