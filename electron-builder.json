@@ -12,6 +12,11 @@
     "package.json"
   ],
   "afterPack": "./afterPack.js",
+  "compression": "maximum",
+  "asar": true,
+  "asarUnpack": [
+    "**/node_modules/better-sqlite3/**"
+  ],
   "win": {
     "target": [
       {

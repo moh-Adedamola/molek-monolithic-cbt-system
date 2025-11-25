@@ -1,3 +1,6 @@
+// ✅ MUST BE FIRST - Initialize logger before anything else
+require('./utils/logger');
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -40,7 +43,8 @@ app.get('/api/health', (req, res) => {
         paths: {
             database: process.env.DB_PATH || 'default',
             archives: process.env.ARCHIVES_PATH || 'default',
-            uploads: process.env.UPLOADS_PATH || 'default'
+            uploads: process.env.UPLOADS_PATH || 'default',
+            logs: process.env.LOGS_PATH || 'default'
         }
     });
 });
@@ -159,5 +163,4 @@ process.on('unhandledRejection', (reason, promise) => {
     // Don't exit in production, just log
 });
 
-// ✅ CRITICAL FIX: Export the server instance, not the app
 module.exports = server;

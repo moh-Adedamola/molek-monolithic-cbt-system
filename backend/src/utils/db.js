@@ -2,26 +2,42 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
+console.log('========================================');
+console.log('🗄️  DATABASE MODULE LOADING');
+console.log('========================================');
+
 /**
  * Get database path from environment or use default
  */
 function getDatabasePath() {
+    console.log('📂 Determining database path...');
+    console.log('   NODE_ENV:', process.env.NODE_ENV);
+    console.log('   DB_PATH env var:', process.env.DB_PATH);
+    console.log('   __dirname:', __dirname);
+
     // Priority 1: Environment variable from Electron
     if (process.env.DB_PATH) {
+        console.log('   ✅ Using DB_PATH from environment');
+
         // If it's already a full path to .db file
         if (process.env.DB_PATH.endsWith('.db')) {
-            console.log('📂 Using DB_PATH:', process.env.DB_PATH);
+            console.log('   📂 Full path detected:', process.env.DB_PATH);
+            console.log('   File exists?', fs.existsSync(process.env.DB_PATH));
             return process.env.DB_PATH;
         }
+
         // If it's a directory, append cbt.db
         const dbPath = path.join(process.env.DB_PATH, 'cbt.db');
-        console.log('📂 Using DB_PATH directory:', dbPath);
+        console.log('   📂 Directory path, appending cbt.db:', dbPath);
+        console.log('   Directory exists?', fs.existsSync(process.env.DB_PATH));
+        console.log('   File exists?', fs.existsSync(dbPath));
         return dbPath;
     }
 
     // Priority 2: Default development path
     const defaultPath = path.join(__dirname, 'cbt.db');
-    console.log('📂 Using default DB path:', defaultPath);
+    console.log('   ⚠️  No DB_PATH set, using default:', defaultPath);
+    console.log('   File exists?', fs.existsSync(defaultPath));
     return defaultPath;
 }
 
@@ -31,14 +47,28 @@ function getDatabasePath() {
 function initializeDatabase(dbPath) {
     const dbExists = fs.existsSync(dbPath);
 
+    console.log('========================================');
+    console.log('🔧 DATABASE INITIALIZATION');
+    console.log('========================================');
+    console.log('Database path:', dbPath);
+    console.log('Database exists?', dbExists);
+
     if (!dbExists) {
-        console.log('⚠️  Database not found, creating new one...');
+        console.log('⚠️  Database file not found - creating new database...');
 
         // Ensure directory exists
         const dbDir = path.dirname(dbPath);
+        console.log('   Checking directory:', dbDir);
+
         if (!fs.existsSync(dbDir)) {
+            console.log('   📁 Creating directory...');
             fs.mkdirSync(dbDir, { recursive: true });
+            console.log('   ✅ Directory created');
+        } else {
+            console.log('   ✅ Directory exists');
         }
+
+        console.log('   📝 Creating database tables...');
 
         // Create database with tables
         const db = new Database(dbPath);
@@ -114,34 +144,75 @@ function initializeDatabase(dbPath) {
             CREATE INDEX IF NOT EXISTS idx_submissions_subject ON submissions(subject);
         `);
 
-        console.log('✅ Database created and initialized');
+        console.log('   ✅ Database tables created');
         db.close();
+        console.log('   ✅ Database initialization complete');
     } else {
-        console.log('✅ Database found');
+        console.log('✅ Database file exists');
+
+        // Auto-migrate: Add missing columns if needed
+        console.log('🔧 Checking for schema updates...');
+        const db = new Database(dbPath);
+
+        try {
+            // Add plain_password if missing
+            db.prepare('ALTER TABLE students ADD COLUMN plain_password TEXT').run();
+            console.log('   ✅ Added plain_password column');
+        } catch (error) {
+            if (error.message.includes('duplicate column')) {
+                console.log('   ✅ Schema is up to date');
+            } else {
+                console.error('   ⚠️  Schema update warning:', error.message);
+            }
+        }
+
+        db.close();
     }
+
+    console.log('========================================');
 }
 
 /**
  * Get database connection
  */
 function getDb() {
+    console.log('========================================');
+    console.log('🔌 GET DATABASE CONNECTION');
+    console.log('========================================');
+
     const dbPath = getDatabasePath();
 
     try {
-        // Initialize if needed
+        console.log('   Initializing database if needed...');
         initializeDatabase(dbPath);
 
-        // Open connection
+        console.log('   Opening database connection...');
         const db = new Database(dbPath);
 
-        // Enable foreign keys
+        console.log('   Setting PRAGMA foreign_keys...');
         db.pragma('foreign_keys = ON');
+
+        console.log('✅ Database connection established');
+        console.log('   Path:', dbPath);
+        console.log('========================================');
 
         return db;
     } catch (error) {
-        console.error('❌ Database connection failed:', error);
+        console.error('========================================');
+        console.error('❌ DATABASE CONNECTION FAILED');
+        console.error('========================================');
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        console.error('Error code:', error.code);
+        console.error('Error stack:', error.stack);
+        console.error('Database path attempted:', dbPath);
+        console.error('========================================');
+
         throw new Error(`Failed to connect to database: ${error.message}`);
     }
 }
+
+console.log('✅ Database module loaded');
+console.log('========================================');
 
 module.exports = { getDb, getDatabasePath };

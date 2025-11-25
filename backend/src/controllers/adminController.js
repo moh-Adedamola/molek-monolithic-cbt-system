@@ -13,38 +13,67 @@ function getClientIp(req) {
         'unknown';
 }
 
-// ============================================
-// STUDENTS
-// ============================================
-
+// ================================================================
+// CREATE SINGLE STUDENT - WITH FULL LOGGING
+// ================================================================
 async function createStudent(req, res) {
     let db;
+
+    console.log('========================================');
+    console.log('👤 CREATE SINGLE STUDENT');
+    console.log('========================================');
+    console.log('Timestamp:', new Date().toISOString());
+
     try {
         const { first_name, middle_name, last_name, class: classLevel, student_id } = req.body;
 
+        console.log('📥 Request data:');
+        console.log('   First name:', first_name);
+        console.log('   Middle name:', middle_name);
+        console.log('   Last name:', last_name);
+        console.log('   Class:', classLevel);
+        console.log('   Student ID:', student_id);
+
         if (!first_name || !last_name || !classLevel) {
+            console.error('❌ Missing required fields');
             return res.status(400).json({ error: 'first_name, last_name, and class required' });
         }
 
+        console.log('🔐 Generating credentials...');
         const password = generatePassword();
+        console.log('   Generated password:', password);
+
         const passwordHash = await hashPassword(password);
+        console.log('   Password hashed:', passwordHash.substring(0, 20) + '...');
+
         const examCode = generateExamCode(classLevel, classLevel, Date.now());
+        console.log('   Generated exam code:', examCode);
 
-        console.log('🔐 Creating student:');
-        console.log('   Name:', first_name, middle_name, last_name);
-        console.log('   Class:', classLevel);
-        console.log('   Exam Code:', examCode);
-        console.log('   Plain Password:', password);
-        console.log('   Password Hash:', passwordHash.substring(0, 20) + '...');
-
+        console.log('🗄️  Connecting to database...');
         db = getDb();
+        console.log('✅ Database connected');
+
+        console.log('💾 Inserting student into database...');
         const stmt = db.prepare(`
             INSERT INTO students (first_name, middle_name, last_name, class, student_id, exam_code, password_hash, plain_password)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `);
-        const result = stmt.run(first_name, middle_name || null, last_name, classLevel, student_id || null, examCode, passwordHash, password);
 
-        console.log('✅ Student created with ID:', result.lastInsertRowid);
+        const result = stmt.run(
+            first_name,
+            middle_name || null,
+            last_name,
+            classLevel,
+            student_id || null,
+            examCode,
+            passwordHash,
+            password
+        );
+
+        console.log('✅ Student inserted successfully');
+        console.log('   Student ID:', result.lastInsertRowid);
+        console.log('   Exam Code:', examCode);
+        console.log('   Password:', password);
 
         // Audit log
         logAudit({
@@ -54,12 +83,25 @@ async function createStudent(req, res) {
             details: `Created student: ${first_name} ${last_name} (${examCode}) for ${classLevel}`,
             ipAddress: getClientIp(req),
             status: 'success',
-            metadata: { class: classLevel, examCode }
+            metadata: { class: classLevel, examCode, studentId: result.lastInsertRowid }
         });
 
+        console.log('========================================');
+        console.log('✅ STUDENT CREATION COMPLETE');
+        console.log('========================================');
+
         res.json({ exam_code: examCode, password });
+
     } catch (error) {
-        console.error('❌ Create student error:', error);
+        console.error('========================================');
+        console.error('❌ STUDENT CREATION FAILED');
+        console.error('========================================');
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        console.error('Error code:', error.code);
+        console.error('Error stack:', error.stack);
+        console.error('========================================');
+
         logAudit({
             action: ACTIONS.STUDENT_CREATED,
             userType: 'admin',
@@ -68,74 +110,264 @@ async function createStudent(req, res) {
             ipAddress: getClientIp(req),
             status: 'failure'
         });
-        res.status(500).json({ error: 'Failed to create student' });
+
+        res.status(500).json({
+            error: 'Failed to create student',
+            details: error.message
+        });
     } finally {
-        if (db) db.close();
+        if (db) {
+            db.close();
+            console.log('🗄️  Database connection closed');
+        }
     }
 }
 
+// ================================================================
+// BULK CREATE STUDENTS - WITH FULL LOGGING
+// ================================================================
 async function bulkCreateStudents(req, res) {
     let db;
+
+    console.log('========================================');
+    console.log('📦 BULK STUDENT UPLOAD STARTED');
+    console.log('========================================');
+    console.log('Timestamp:', new Date().toISOString());
+    console.log('Environment:', process.env.NODE_ENV);
+
     try {
+        // Step 1: Check if file exists
+        console.log('📁 STEP 1: Checking for uploaded file...');
+        console.log('   req.file exists?', !!req.file);
+        console.log('   req.files exists?', !!req.files);
+
+        if (req.file) {
+            console.log('✅ File detected in request');
+            console.log('   📄 File details:');
+            console.log('      Original name:', req.file.originalname);
+            console.log('      Mimetype:', req.file.mimetype);
+            console.log('      Size:', req.file.size, 'bytes');
+            console.log('      Field name:', req.file.fieldname);
+            console.log('      Encoding:', req.file.encoding);
+            console.log('      Has buffer?', !!req.file.buffer);
+            console.log('      Buffer length:', req.file.buffer ? req.file.buffer.length : 0);
+            console.log('      Has path?', !!req.file.path);
+
+            if (req.file.path) {
+                console.log('      File path:', req.file.path);
+            }
+        } else {
+            console.error('❌ NO FILE IN REQUEST');
+            console.log('   Request body keys:', Object.keys(req.body));
+            console.log('   Request headers:', req.headers);
+            console.log('   Content-Type:', req.get('content-type'));
+        }
+
         if (!req.file) {
+            console.error('❌ Upload validation failed: No file provided');
             return res.status(400).json({ error: 'CSV file required' });
         }
 
-        const rows = await parseCsvBuffer(req.file.buffer);
+        // Step 2: Check buffer
+        console.log('========================================');
+        console.log('📝 STEP 2: Validating file buffer...');
+
+        if (!req.file.buffer) {
+            console.error('========================================');
+            console.error('❌ CRITICAL ERROR: FILE BUFFER IS MISSING');
+            console.error('========================================');
+            console.error('This indicates multer is not configured correctly!');
+            console.error('Expected: storage: multer.memoryStorage()');
+            console.error('Check: backend/src/routes/adminRoutes.js');
+            console.error('========================================');
+
+            return res.status(500).json({
+                error: 'File buffer missing - multer configuration error',
+                hint: 'Update adminRoutes.js to use multer.memoryStorage()',
+                details: 'The file was received but the buffer is undefined'
+            });
+        }
+
+        console.log('✅ File buffer exists');
+        console.log('   Buffer is Buffer?', Buffer.isBuffer(req.file.buffer));
+        console.log('   Buffer length:', req.file.buffer.length);
+
+        // Step 3: Parse CSV
+        console.log('========================================');
+        console.log('📊 STEP 3: Parsing CSV file...');
+
+        let rows;
+        try {
+            rows = await parseCsvBuffer(req.file.buffer);
+            console.log('✅ CSV parsed successfully');
+            console.log('   Total rows:', rows.length);
+
+            if (rows.length > 0) {
+                console.log('   First row (sample):');
+                console.log('   ', JSON.stringify(rows[0], null, 2));
+            }
+        } catch (parseError) {
+            console.error('❌ CSV parsing failed');
+            console.error('   Error:', parseError.message);
+            console.error('   Stack:', parseError.stack);
+            throw parseError;
+        }
+
         if (rows.length === 0) {
+            console.error('❌ CSV file is empty');
             return res.status(400).json({ error: 'CSV file is empty' });
         }
 
-        db = getDb();
+        // Step 4: Connect to database
+        console.log('========================================');
+        console.log('🗄️  STEP 4: Connecting to database...');
+        console.log('   DB_PATH env:', process.env.DB_PATH);
+
+        try {
+            db = getDb();
+            console.log('✅ Database connection established');
+        } catch (dbError) {
+            console.error('❌ Database connection failed');
+            console.error('   Error:', dbError.message);
+            console.error('   Stack:', dbError.stack);
+            throw dbError;
+        }
+
+        // Step 5: Process students
+        console.log('========================================');
+        console.log(`👥 STEP 5: Processing ${rows.length} students...`);
+        console.log('========================================');
+
         const credentials = [];
         let successCount = 0;
+        let errorCount = 0;
+        const errors = [];
 
-        console.log(`📥 Starting bulk upload of ${rows.length} students...`);
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            const rowNum = i + 1;
 
-        for (const row of rows) {
+            console.log(`\n--- Processing Row ${rowNum}/${rows.length} ---`);
+
             const firstName = row.first_name?.trim();
             const lastName = row.last_name?.trim();
             const classLevel = row.class?.trim();
             const middleName = row.middle_name?.trim() || null;
             const studentId = row.student_id?.trim() || null;
 
-            if (!firstName || !lastName || !classLevel) continue;
+            console.log(`   Data: ${firstName} ${middleName || ''} ${lastName} (${classLevel})`);
 
-            const password = generatePassword();
-            const passwordHash = await hashPassword(password);
-            const examCode = generateExamCode(classLevel, classLevel, Date.now() + successCount);
+            if (!firstName || !lastName || !classLevel) {
+                const missingFields = [];
+                if (!firstName) missingFields.push('first_name');
+                if (!lastName) missingFields.push('last_name');
+                if (!classLevel) missingFields.push('class');
 
-            const stmt = db.prepare(`
-                INSERT INTO students (first_name, middle_name, last_name, class, student_id, exam_code, password_hash, plain_password)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `);
-            stmt.run(firstName, middleName, lastName, classLevel, studentId, examCode, passwordHash, password);
+                console.warn(`   ⚠️  Row ${rowNum}: Missing fields: ${missingFields.join(', ')} - SKIPPING`);
+                errors.push(`Row ${rowNum}: Missing ${missingFields.join(', ')}`);
+                errorCount++;
+                continue;
+            }
 
-            console.log(`✅ Student ${successCount + 1}: ${firstName} ${lastName} | ${examCode} | ${password}`);
+            try {
+                console.log(`   🔐 Generating credentials...`);
+                const password = generatePassword();
+                const passwordHash = await hashPassword(password);
+                const examCode = generateExamCode(classLevel, classLevel, Date.now() + successCount);
 
-            credentials.push(`${firstName} ${lastName} | ${examCode} | ${password}`);
-            successCount++;
+                console.log(`   💾 Inserting into database...`);
+                const stmt = db.prepare(`
+                    INSERT INTO students (first_name, middle_name, last_name, class, student_id, exam_code, password_hash, plain_password)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                `);
+
+                stmt.run(firstName, middleName, lastName, classLevel, studentId, examCode, passwordHash, password);
+
+                console.log(`   ✅ Student ${rowNum}: ${firstName} ${lastName} | ${examCode} | ${password}`);
+
+                credentials.push(`${firstName} ${lastName} | ${examCode} | ${password}`);
+                successCount++;
+
+            } catch (insertError) {
+                console.error(`   ❌ Failed to insert student ${rowNum}`);
+                console.error(`      Error: ${insertError.message}`);
+                console.error(`      Code: ${insertError.code}`);
+
+                if (insertError.code === 'SQLITE_CONSTRAINT') {
+                    errors.push(`Row ${rowNum}: Duplicate exam code or student ID`);
+                } else {
+                    errors.push(`Row ${rowNum}: ${insertError.message}`);
+                }
+
+                errorCount++;
+            }
         }
 
-        console.log(`✅ Bulk upload complete: ${successCount} students created`);
+        console.log('\n========================================');
+        console.log('📊 BULK UPLOAD SUMMARY');
+        console.log('========================================');
+        console.log('✅ Successful:', successCount);
+        console.log('❌ Errors:', errorCount);
+        console.log('📝 Total rows:', rows.length);
+
+        if (errors.length > 0) {
+            console.log('\n⚠️  Errors encountered:');
+            errors.forEach(err => console.log('   -', err));
+        }
+
+        console.log('========================================');
 
         // Audit log
         logAudit({
             action: ACTIONS.STUDENTS_BULK_UPLOADED,
             userType: 'admin',
             userIdentifier: 'admin',
-            details: `Bulk uploaded ${successCount} students`,
+            details: `Bulk uploaded ${successCount} students (${errorCount} errors)`,
             ipAddress: getClientIp(req),
-            status: 'success',
-            metadata: { count: successCount, totalRows: rows.length }
+            status: successCount > 0 ? 'success' : 'failure',
+            metadata: {
+                count: successCount,
+                errors: errorCount,
+                totalRows: rows.length
+            }
         });
 
+        if (successCount === 0) {
+            console.error('❌ No students were created');
+            return res.status(400).json({
+                error: 'No students were created',
+                details: `All ${errorCount} rows had errors`,
+                errors: errors
+            });
+        }
+
+        console.log('📄 Generating credentials file...');
         const credentialsText = credentials.join('\n');
+
+        console.log('✅ Sending response with credentials');
         res.setHeader('Content-Type', 'text/plain');
         res.setHeader('Content-Disposition', 'attachment; filename=student_credentials.txt');
         res.send(credentialsText);
+
+        console.log('========================================');
+        console.log('✅ BULK UPLOAD COMPLETE');
+        console.log('========================================');
+
     } catch (error) {
-        console.error('❌ Bulk upload error:', error);
+        console.error('========================================');
+        console.error('💥 BULK UPLOAD CRITICAL ERROR');
+        console.error('========================================');
+        console.error('Error name:', error.name);
+        console.error('Error message:', error.message);
+        console.error('Error code:', error.code);
+        console.error('Error stack:', error.stack);
+
+        if (error.code) {
+            console.error('Error code details:', error.code);
+        }
+
+        console.error('========================================');
+
         logAudit({
             action: ACTIONS.STUDENTS_BULK_UPLOADED,
             userType: 'admin',
@@ -144,9 +376,17 @@ async function bulkCreateStudents(req, res) {
             ipAddress: getClientIp(req),
             status: 'failure'
         });
-        res.status(500).json({ error: 'Bulk upload failed' });
+
+        res.status(500).json({
+            error: 'Bulk upload failed',
+            details: error.message,
+            hint: 'Check server console logs for detailed error information'
+        });
     } finally {
-        if (db) db.close();
+        if (db) {
+            db.close();
+            console.log('🗄️  Database connection closed');
+        }
     }
 }
 
