@@ -20,7 +20,7 @@
     "build:frontend": "npm run build --workspace frontend",
     "build:backend": "echo Backend ready for packaging",
     "build": "npm run build:frontend && npm run build:backend",
-    "package": "npm run clean && npm run install-all && npm run build && npm run rebuild && electron-builder --win portable --config electron-builder.json",
+    "package": "npm run clean && npm run install-all && npm run build && npx electron-rebuild -f -w molek-cbt && electron-builder --win portable --config electron-builder.json",
     "package:dir": "npm run build && npx electron-builder@24.9.1 --win --x64 --dir --config electron-builder.json",
     "test:electron": "cross-env NODE_ENV=development electron electron/main.js",
     "clean": "rimraf node_modules dist-electron dist frontend/dist backend/dist backend/node_modules/.cache"

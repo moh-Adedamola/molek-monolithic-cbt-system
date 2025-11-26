@@ -1,4 +1,4 @@
-const { getDb } = require('../utils/db');
+const { run, all } = require('../utils/db');
 
 /**
  * Audit Log Actions
@@ -53,24 +53,20 @@ const ACTIONS = {
  * @param {string} params.status - 'success', 'failure', or 'warning'
  * @param {Object} params.metadata - Additional data (will be JSON stringified)
  */
-function logAudit({
-                      action,
-                      userType = 'admin',
-                      userIdentifier = 'system',
-                      details = '',
-                      ipAddress = 'unknown',
-                      status = 'success',
-                      metadata = {}
-                  }) {
-    let db;
+async function logAudit({
+                            action,
+                            userType = 'admin',
+                            userIdentifier = 'system',
+                            details = '',
+                            ipAddress = 'unknown',
+                            status = 'success',
+                            metadata = {}
+                        }) {
     try {
-        db = getDb();
-        const stmt = db.prepare(`
+        await run(`
             INSERT INTO audit_logs (action, user_type, user_identifier, details, ip_address, status, metadata)
             VALUES (?, ?, ?, ?, ?, ?, ?)
-        `);
-
-        stmt.run(
+        `, [
             action,
             userType,
             userIdentifier,
@@ -78,177 +74,63 @@ function logAudit({
             ipAddress,
             status,
             JSON.stringify(metadata)
-        );
-
-        console.log(`📝 Audit Log: [${status.toUpperCase()}] ${action} - ${userIdentifier}: ${details}`);
+        ]);
+        console.log(`Audit: [${status.toUpperCase()}] ${action} - ${userIdentifier}`);
     } catch (error) {
-        console.error('❌ Failed to log audit:', error);
-        // Don't throw - audit logging should never break the app
-    } finally {
-        if (db) db.close();
+        console.error('Failed to log audit:', error);
     }
 }
 
-/**
- * Get audit logs with filtering
- * @param {Object} filters - Filter parameters
- * @returns {Array} Array of audit logs
- */
-function getAuditLogs(filters = {}) {
-    let db;
+async function getAuditLogs(filters = {}) {
     try {
-        db = getDb();
-
-        let query = `
-            SELECT 
-                id,
-                action,
-                user_type,
-                user_identifier,
-                details,
-                ip_address,
-                status,
-                metadata,
-                created_at
-            FROM audit_logs
-            WHERE 1=1
-        `;
+        let query = `SELECT * FROM audit_logs WHERE 1=1`;
         const params = [];
 
-        // Apply filters
-        if (filters.action) {
-            query += ' AND action = ?';
-            params.push(filters.action);
-        }
-
-        if (filters.userType) {
-            query += ' AND user_type = ?';
-            params.push(filters.userType);
-        }
-
-        if (filters.status) {
-            query += ' AND status = ?';
-            params.push(filters.status);
-        }
-
-        if (filters.fromDate) {
-            query += ' AND created_at >= ?';
-            params.push(filters.fromDate);
-        }
-
-        if (filters.toDate) {
-            query += ' AND created_at <= ?';
-            params.push(filters.toDate);
-        }
-
+        if (filters.action) { query += ' AND action = ?'; params.push(filters.action); }
+        if (filters.userType) { query += ' AND user_type = ?'; params.push(filters.userType); }
+        if (filters.status) { query += ' AND status = ?'; params.push(filters.status); }
+        if (filters.fromDate) { query += ' AND created_at >= ?'; params.push(filters.fromDate); }
+        if (filters.toDate) { query += ' AND created_at <= ?'; params.push(filters.toDate); }
         if (filters.search) {
             query += ' AND (user_identifier LIKE ? OR details LIKE ?)';
             params.push(`%${filters.search}%`, `%${filters.search}%`);
         }
 
         query += ' ORDER BY created_at DESC';
+        if (filters.limit) { query += ' LIMIT ?'; params.push(parseInt(filters.limit)); }
 
-        if (filters.limit) {
-            query += ' LIMIT ?';
-            params.push(parseInt(filters.limit));
-        }
-
-        const stmt = db.prepare(query);
-        const logs = stmt.all(...params);
-
-        // Parse metadata
-        return logs.map(log => ({
-            ...log,
-            metadata: log.metadata ? JSON.parse(log.metadata) : {}
-        }));
+        const rows = await all(query, params);
+        return rows.map(r => ({ ...r, metadata: r.metadata ? JSON.parse(r.metadata) : {} }));
     } catch (error) {
-        console.error('Failed to get audit logs:', error);
+        console.error('getAuditLogs error:', error);
         return [];
-    } finally {
-        if (db) db.close();
     }
 }
 
-/**
- * Get audit statistics
- * @returns {Object} Statistics object
- */
-function getAuditStats() {
-    let db;
+async function getAuditStats() {
     try {
-        db = getDb();
+        const total = (await all('SELECT COUNT(*) as c FROM audit_logs'))[0].c;
+        const today = (await all(`SELECT COUNT(*) as c FROM audit_logs WHERE DATE(created_at) = DATE('now')`))[0].c;
+        const successful = (await all(`SELECT COUNT(*) as c FROM audit_logs WHERE status = 'success'`))[0].c;
+        const failed = (await all(`SELECT COUNT(*) as c FROM audit_logs WHERE status = 'failure'`))[0].c;
+        const thisWeek = (await all(`SELECT COUNT(*) as c FROM audit_logs WHERE created_at >= datetime('now', '-7 days')`))[0].c;
+        const topActions = await all(`SELECT action, COUNT(*) as count FROM audit_logs GROUP BY action ORDER BY count DESC LIMIT 10`);
 
-        const totalStmt = db.prepare('SELECT COUNT(*) as count FROM audit_logs');
-        const total = totalStmt.get().count;
-
-        const todayStmt = db.prepare(`
-            SELECT COUNT(*) as count FROM audit_logs 
-            WHERE DATE(created_at) = DATE('now')
-        `);
-        const today = todayStmt.get().count;
-
-        const successStmt = db.prepare(`
-            SELECT COUNT(*) as count FROM audit_logs WHERE status = 'success'
-        `);
-        const successful = successStmt.get().count;
-
-        const failureStmt = db.prepare(`
-            SELECT COUNT(*) as count FROM audit_logs WHERE status = 'failure'
-        `);
-        const failed = failureStmt.get().count;
-
-        const weekStmt = db.prepare(`
-            SELECT COUNT(*) as count FROM audit_logs 
-            WHERE created_at >= datetime('now', '-7 days')
-        `);
-        const thisWeek = weekStmt.get().count;
-
-        const actionStatsStmt = db.prepare(`
-            SELECT action, COUNT(*) as count 
-            FROM audit_logs 
-            GROUP BY action 
-            ORDER BY count DESC 
-            LIMIT 10
-        `);
-        const topActions = actionStatsStmt.all();
-
-        return {
-            total,
-            today,
-            successful,
-            failed,
-            thisWeek,
-            topActions
-        };
+        return { total, today, successful, failed, thisWeek, topActions };
     } catch (error) {
-        console.error('Failed to get audit stats:', error);
+        console.error('getAuditStats error:', error);
         return { total: 0, today: 0, successful: 0, failed: 0, thisWeek: 0, topActions: [] };
-    } finally {
-        if (db) db.close();
     }
 }
 
-/**
- * Delete old audit logs
- * @param {number} daysToKeep - Number of days to keep
- * @returns {number} Number of deleted logs
- */
-function cleanOldLogs(daysToKeep = 90) {
-    let db;
+async function cleanOldLogs(daysToKeep = 90) {
     try {
-        db = getDb();
-        const stmt = db.prepare(`
-            DELETE FROM audit_logs 
-            WHERE created_at < datetime('now', '-' || ? || ' days')
-        `);
-        const result = stmt.run(daysToKeep);
-        console.log(`🗑️ Deleted ${result.changes} old audit logs (older than ${daysToKeep} days)`);
-        return result.changes;
+        const { changes } = await run(`DELETE FROM audit_logs WHERE created_at < datetime('now', '-' || ? || ' days')`, [daysToKeep]);
+        console.log(`Deleted ${changes} old audit logs`);
+        return changes;
     } catch (error) {
-        console.error('Failed to clean old logs:', error);
+        console.error('cleanOldLogs error:', error);
         return 0;
-    } finally {
-        if (db) db.close();
     }
 }
 
