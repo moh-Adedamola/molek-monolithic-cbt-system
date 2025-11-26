@@ -25,7 +25,7 @@ async function createStudent(req, res) {
 
         const password = generatePassword();
         const passwordHash = await hashPassword(password);
-        const examCode = generateExamCode(classLevel, classLevel, Date.now());
+        const examCode = generateExamCode(classLevel); // ✅ NEW: MOLEK-CLASS-XXXX format
 
         const result = await run(`
             INSERT INTO students (first_name, middle_name, last_name, class, student_id, exam_code, password_hash, plain_password)
@@ -42,10 +42,18 @@ async function createStudent(req, res) {
             metadata: { class: classLevel, examCode, studentId: result.lastID }
         });
 
-        res.json({ success: true, examCode, password, studentId: result.lastID });
+        // ✅ NEW: Return formatted response with full name
+        res.json({
+            success: true,
+            examCode,
+            password,
+            studentId: result.lastID,
+            studentName: `${first_name} ${middle_name ? middle_name + ' ' : ''}${last_name}`,
+            class: classLevel
+        });
     } catch (error) {
         console.error('createStudent error:', error);
-        res.status(500).json({ error: 'Failed to create student' });
+        res.json({ error: 'Failed to create student' });
     }
 }
 // ================================================================
@@ -62,7 +70,7 @@ async function bulkCreateStudents(req, res) {
             try {
                 const password = generatePassword();
                 const passwordHash = await hashPassword(password);
-                const examCode = generateExamCode(s.class || 'Unknown', s.class || 'Unknown', Date.now() + Math.random());
+                const examCode = generateExamCode(s.class || 'Unknown'); // ✅ NEW: MOLEK-CLASS-XXXX format
 
                 await run(`
                     INSERT INTO students (first_name, middle_name, last_name, class, student_id, exam_code, password_hash, plain_password)
@@ -78,7 +86,14 @@ async function bulkCreateStudents(req, res) {
                     password
                 ]);
 
-                results.success.push({ ...s, examCode, password });
+                results.success.push({
+                    first_name: s.first_name?.trim() || 'Unknown',
+                    middle_name: s.middle_name?.trim() || '',
+                    last_name: s.last_name?.trim() || 'Unknown',
+                    class: s.class?.trim() || 'Unknown',
+                    examCode,
+                    password
+                });
             } catch (err) {
                 results.failed.push({ ...s, error: err.message });
             }
@@ -87,16 +102,64 @@ async function bulkCreateStudents(req, res) {
         logAudit({
             action: ACTIONS.STUDENTS_BULK_UPLOADED,
             userType: 'admin',
+            userIdentifier: 'system',
             details: `Bulk upload: ${results.success.length} success, ${results.failed.length} failed`,
             ipAddress: getClientIp(req),
             status: results.failed.length === 0 ? 'success' : 'warning'
         });
 
-        res.json(results);
+        // ✅ NEW: Generate formatted text output like the example
+        const textOutput = generateFormattedCredentials(results.success);
+
+        // Return as text file
+        res.setHeader('Content-Type', 'text/plain');
+        res.setHeader('Content-Disposition', 'attachment; filename="student_credentials.txt"');
+        res.send(textOutput);
     } catch (error) {
         console.error('bulkCreateStudents error:', error);
         res.status(500).json({ error: 'Bulk upload failed' });
     }
+}
+
+// ✅ NEW: Format credentials like the example table
+function generateFormattedCredentials(students) {
+    if (!students || students.length === 0) {
+        return 'No students to display.';
+    }
+
+    // Group by class
+    const byClass = {};
+    students.forEach(s => {
+        if (!byClass[s.class]) byClass[s.class] = [];
+        byClass[s.class].push(s);
+    });
+
+    let output = '';
+
+    Object.keys(byClass).sort().forEach(className => {
+        const classStudents = byClass[className];
+
+        output += '============================================================\n';
+        output += '                     STUDENT EXAM CREDENTIALS\n';
+        output += '============================================================\n';
+        output += `CLASS: ${className}\n`;
+        output += '------------------------------------------------------------\n';
+        output += 'NAME                EXAM CODE         PASSWORD\n';
+        output += '------------------------------------------------------------\n';
+
+        classStudents.forEach(s => {
+            const fullName = `${s.first_name} ${s.middle_name ? s.middle_name + ' ' : ''}${s.last_name}`;
+            const namePadded = fullName.padEnd(20, ' ');
+            const examCodePadded = s.examCode.padEnd(18, ' ');
+            const passwordPadded = s.password.padEnd(10, ' ');
+
+            output += `${namePadded}${examCodePadded}${passwordPadded}\n`;
+        });
+
+        output += '============================================================\n\n';
+    });
+
+    return output;
 }
 
 async function getClasses(req, res) {
@@ -437,9 +500,25 @@ async function deleteExam(req, res) {
 
 async function getSubjects(req, res) {
     try {
-        const rows = await all('SELECT DISTINCT subject FROM exams ORDER BY subject');
-        res.json({ subjects: rows.map(r => r.subject) });
+        // Get all exams with their subjects and classes
+        const rows = await all('SELECT DISTINCT subject, class FROM exams ORDER BY class, subject');
+        console.log('📚 Raw exams data:', rows);
+
+        // Group by class
+        const subjectsByClass = {};
+        rows.forEach(row => {
+            if (!subjectsByClass[row.class]) {
+                subjectsByClass[row.class] = [];
+            }
+            if (!subjectsByClass[row.class].includes(row.subject)) {
+                subjectsByClass[row.class].push(row.subject);
+            }
+        });
+
+        console.log('📚 Subjects grouped by class:', subjectsByClass);
+        res.json({ subjects: subjectsByClass });
     } catch (error) {
+        console.error('❌ getSubjects error:', error);
         res.status(500).json({ error: 'Failed to get subjects' });
     }
 }
@@ -723,7 +802,7 @@ module.exports = {
 
     // Results
     getClassResults,
-    exportClassResultsAsText,
+    exportClassResults: exportClassResultsAsText,
     getFilteredResults,
 
     // Dashboard
@@ -734,6 +813,6 @@ module.exports = {
     getActiveExamSessions,
 
     // Audit Logs
-    getAuditLogsController,
-    getAuditStatsController
+    getAuditLogs: getAuditLogsController,
+    getAuditStats: getAuditStatsController
 };

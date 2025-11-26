@@ -3,17 +3,26 @@ import { Save, Database, Settings, Info } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Card from '../../components/common/Card';
 import Input from '../../components/common/Input';
+import Select from '../../components/common/Select';
 import Alert from '../../components/common/Alert';
-import { getDashboardStats } from '../../services/api';
+import { getDashboardStats, getSystemSettings, updateSystemSettings } from '../../services/api';
+
+const TERM_OPTIONS = [
+    { value: 'First Term', label: 'First Term' },
+    { value: 'Second Term', label: 'Second Term' },
+    { value: 'Third Term', label: 'Third Term' }
+];
 
 const SystemSettings = () => {
     const [alert, setAlert] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [loadingSettings, setLoadingSettings] = useState(true);
     const [stats, setStats] = useState(null);
     const [settings, setSettings] = useState({
         systemName: 'Molek CBT System',
         schoolName: 'Molek School',
-        sessionYear: '2024/2025',
+        academicSession: '2024/2025',
+        currentTerm: 'First Term',
         defaultExamDuration: 60,
         autoSubmit: true,
         shuffleQuestions: false,
@@ -34,33 +43,48 @@ const SystemSettings = () => {
         }
     };
 
-    const loadSettings = () => {
-        // Load from localStorage for now
-        const saved = localStorage.getItem('systemSettings');
-        if (saved) {
-            setSettings(JSON.parse(saved));
+    const loadSettings = async () => {
+        try {
+            setLoadingSettings(true);
+            const response = await getSystemSettings();
+            if (response.data.success && response.data.settings) {
+                setSettings(response.data.settings);
+            }
+        } catch (error) {
+            console.error('Failed to load settings:', error);
+            setAlert({ type: 'error', message: 'Failed to load settings' });
+        } finally {
+            setLoadingSettings(false);
         }
     };
 
-    const handleSave = () => {
+    const handleSave = async () => {
         try {
             setLoading(true);
-            // Save to localStorage for now
-            localStorage.setItem('systemSettings', JSON.stringify(settings));
-            setAlert({ type: 'success', message: 'Settings saved successfully' });
+            const response = await updateSystemSettings(settings);
+
+            if (response.data.success) {
+                setAlert({ type: 'success', message: 'Settings saved successfully!' });
+                // Update local state with response
+                if (response.data.settings) {
+                    setSettings(response.data.settings);
+                }
+            }
         } catch (error) {
+            console.error('Failed to save settings:', error);
             setAlert({ type: 'error', message: 'Failed to save settings' });
         } finally {
             setLoading(false);
         }
     };
 
-    const handleBackup = () => {
-        setAlert({
-            type: 'info',
-            message: 'Database backup feature will be available in the next update. Currently, your database is stored in backend/src/db/cbt.db'
-        });
-    };
+    if (loadingSettings) {
+        return (
+            <div className="flex items-center justify-center h-64">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-6">
@@ -97,7 +121,7 @@ const SystemSettings = () => {
                         </div>
                         <div>
                             <p className="text-gray-600">Submissions</p>
-                            <p className="text-2xl font-bold text-green-600">{stats.completedExams}</p>
+                            <p className="text-2xl font-bold text-green-600">{stats.totalSubmissions}</p>
                         </div>
                     </div>
                 </Card>
@@ -124,9 +148,16 @@ const SystemSettings = () => {
                     />
                     <Input
                         label="Academic Session"
-                        value={settings.sessionYear}
-                        onChange={(e) => setSettings({ ...settings, sessionYear: e.target.value })}
+                        value={settings.academicSession}
+                        onChange={(e) => setSettings({ ...settings, academicSession: e.target.value })}
                         placeholder="e.g., 2024/2025"
+                    />
+                    <p className="text-xs text-gray-500 -mt-2">Format: YYYY/YYYY (e.g., 2024/2025)</p>
+                    <Select
+                        label="Current Term"
+                        value={settings.currentTerm}
+                        onChange={(e) => setSettings({ ...settings, currentTerm: e.target.value })}
+                        options={TERM_OPTIONS}
                     />
                     <Input
                         label="Default Exam Duration (minutes)"
@@ -184,28 +215,6 @@ const SystemSettings = () => {
                 </div>
             </Card>
 
-            {/* Database Management */}
-            <Card>
-                <div className="flex items-center gap-2 mb-4">
-                    <Database className="h-5 w-5 text-blue-600" />
-                    <h3 className="text-lg font-semibold">Database Management</h3>
-                </div>
-                <div className="space-y-4">
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                        <p className="text-sm text-blue-800">
-                            <strong>Database Location:</strong> backend/src/db/cbt.db
-                        </p>
-                        <p className="text-sm text-blue-800 mt-2">
-                            💡 <strong>Manual Backup:</strong> Copy the cbt.db file to a safe location regularly
-                        </p>
-                    </div>
-                    <Button onClick={handleBackup} variant="outline">
-                        <Database className="mr-2 h-4 w-4" />
-                        View Database Info
-                    </Button>
-                </div>
-            </Card>
-
             {/* Save Button */}
             <div className="flex justify-end">
                 <Button onClick={handleSave} loading={loading}>
@@ -214,16 +223,20 @@ const SystemSettings = () => {
                 </Button>
             </div>
 
-            {/* Offline System Info */}
+            {/* Current Session Info */}
             <Card>
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                    <h4 className="font-semibold text-green-900 mb-2">🌐 Offline CBT System</h4>
-                    <ul className="text-sm text-green-800 space-y-1">
-                        <li>• Master System: Running on this computer (Server)</li>
-                        <li>• Student Systems: Connect via local network</li>
-                        <li>• Capacity: 100+ concurrent student systems</li>
-                        <li>• No internet required after setup</li>
-                    </ul>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <h4 className="font-semibold text-blue-900 mb-2">📚 Current Session Information</h4>
+                    <div className="text-sm text-blue-800 space-y-1">
+                        <p><strong>Academic Session:</strong> {settings.academicSession}</p>
+                        <p><strong>Current Term:</strong> {settings.currentTerm}</p>
+                        <p><strong>School:</strong> {settings.schoolName}</p>
+                    </div>
+                    <div className="mt-3 pt-3 border-t border-blue-200">
+                        <p className="text-xs text-blue-700">
+                            💡 <strong>Tip:</strong> Before starting a new term, archive current data in Archive Management
+                        </p>
+                    </div>
                 </div>
             </Card>
         </div>

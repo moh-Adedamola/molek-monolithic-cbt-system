@@ -1,16 +1,28 @@
+// backend/src/routes/adminRoutes.js (DEBUG VERSION)
 const express = require('express');
+const router = express.Router();
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const upload = multer({ storage: multer.memoryStorage() });
+
+// Import all controllers
+const adminController = require('../controllers/adminController');
+
+// Settings Controller
+const settingsController = require('../controllers/settingsController');
+
+// Archive Controller
+const archiveController = require('../controllers/archiveController');
+
+console.log('🔍 DEBUG: Checking adminController exports...');
+console.log('Available functions:', Object.keys(adminController));
+
+// Destructure after checking
 const {
-    // Students
     createStudent,
     bulkCreateStudents,
     getClasses,
     deleteStudentsByClass,
     exportStudentsByClass,
-
-    // Questions & Exams
     uploadQuestions,
     getAllQuestions,
     activateExam,
@@ -19,86 +31,38 @@ const {
     updateExam,
     deleteExam,
     getSubjects,
-
-    // Results
     getClassResults,
-    exportClassResultsAsText,
+    exportClassResults,
     getFilteredResults,
-
-    // Dashboard
     getDashboardStats,
     getRecentSubmissions,
-
-    // Monitoring
     getActiveExamSessions,
+    getAuditLogs,
+    getAuditStats
+} = adminController;
 
-    // Audit Logs
-    getAuditLogsController,
-    getAuditStatsController
-} = require('../controllers/adminController');
+const {
+    getSystemSettings,
+    updateSystemSettings
+} = settingsController;
 
-const router = express.Router();
+const {
+    archiveTerm,
+    resetDatabase,
+    listArchives,
+    getArchivesPath
+} = archiveController;
 
-console.log('========================================');
-console.log('📋 LOADING ADMIN ROUTES');
-console.log('========================================');
+console.log('🔍 Checking specific functions:');
+console.log('  exportClassResults:', typeof exportClassResults);
+console.log('  getFilteredResults:', typeof getFilteredResults);
+console.log('  getClassResults:', typeof getClassResults);
 
-// ✅ CRITICAL FIX: Use memory storage for CSV uploads
-console.log('🔧 Configuring multer with memory storage...');
-const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
-    fileFilter: (req, file, cb) => {
-        console.log('📁 Multer file filter triggered');
-        console.log('   Original name:', file.originalname);
-        console.log('   Mimetype:', file.mimetype);
-        console.log('   Field name:', file.fieldname);
+console.log('📝 Registering admin routes...');
 
-        // Accept CSV and text files
-        if (file.mimetype === 'text/csv' ||
-            file.mimetype === 'application/vnd.ms-excel' ||
-            file.mimetype === 'text/plain' ||
-            file.originalname.endsWith('.csv')) {
-            console.log('   ✅ File accepted');
-            cb(null, true);
-        } else {
-            console.log('   ❌ File rejected - invalid type');
-            cb(new Error('Only CSV files are allowed'), false);
-        }
-    }
-});
-
-console.log('✅ Multer configured with memory storage');
-console.log('   Storage: Memory');
-console.log('   Max file size: 5MB');
-console.log('========================================');
-
-// Logging middleware for all admin routes
-router.use((req, res, next) => {
-    console.log('========================================');
-    console.log(`📨 ADMIN REQUEST: ${req.method} ${req.path}`);
-    console.log('========================================');
-    console.log('Timestamp:', new Date().toISOString());
-    console.log('IP:', req.ip);
-    console.log('User-Agent:', req.get('user-agent'));
-
-    if (Object.keys(req.body).length > 0) {
-        console.log('Body keys:', Object.keys(req.body));
-    }
-
-    if (Object.keys(req.query).length > 0) {
-        console.log('Query params:', req.query);
-    }
-
-    if (req.file) {
-        console.log('File present:', req.file.originalname);
-    }
-
-    console.log('========================================');
-    next();
-});
-
+// ============================================
 // STUDENTS
+// ============================================
 console.log('📝 Registering student routes...');
 router.post('/students', createStudent);
 router.post('/students/bulk', upload.single('file'), bulkCreateStudents);
@@ -107,44 +71,80 @@ router.delete('/students/class', deleteStudentsByClass);
 router.get('/students/export/class', exportStudentsByClass);
 console.log('✅ Student routes registered');
 
+// ============================================
 // QUESTIONS & EXAMS
-console.log('📝 Registering question/exam routes...');
+// ============================================
+console.log('📝 Registering question routes...');
 router.post('/questions/upload', upload.single('file'), uploadQuestions);
 router.get('/questions', getAllQuestions);
-router.patch('/exams/activate', activateExam);
+console.log('✅ Question routes registered');
+
+console.log('📝 Registering exam routes...');
 router.get('/exams', getAllExams);
 router.get('/exams/:id', getExamById);
 router.put('/exams/:id', updateExam);
 router.delete('/exams/:id', deleteExam);
-router.get('/subjects', getSubjects);
-console.log('✅ Question/exam routes registered');
+router.patch('/exams/activate', activateExam);
+console.log('✅ Exam routes registered');
 
+console.log('📝 Registering subject routes...');
+router.get('/subjects', getSubjects);
+console.log('✅ Subject routes registered');
+
+// ============================================
 // RESULTS
+// ============================================
 console.log('📝 Registering result routes...');
+console.log('  About to register /results/class with', typeof getClassResults);
+console.log('  About to register /results/export with', typeof exportClassResults);
+console.log('  About to register /results/filtered with', typeof getFilteredResults);
+
 router.get('/results/class', getClassResults);
-router.get('/results/export', exportClassResultsAsText);
+router.get('/results/export', exportClassResults);
 router.get('/results/filtered', getFilteredResults);
 console.log('✅ Result routes registered');
 
+// ============================================
 // DASHBOARD
+// ============================================
 console.log('📝 Registering dashboard routes...');
 router.get('/dashboard/stats', getDashboardStats);
 router.get('/dashboard/recent-submissions', getRecentSubmissions);
 console.log('✅ Dashboard routes registered');
 
+// ============================================
 // MONITORING
+// ============================================
 console.log('📝 Registering monitoring routes...');
 router.get('/monitoring/sessions', getActiveExamSessions);
 console.log('✅ Monitoring routes registered');
 
+// ============================================
 // AUDIT LOGS
-console.log('📝 Registering audit log routes...');
-router.get('/audit-logs', getAuditLogsController);
-router.get('/audit-logs/stats', getAuditStatsController);
-console.log('✅ Audit log routes registered');
+// ============================================
+console.log('📝 Registering audit routes...');
+router.get('/audit-logs', getAuditLogs);
+router.get('/audit-logs/stats', getAuditStats);
+console.log('✅ Audit routes registered');
 
-console.log('========================================');
-console.log('✅ ALL ADMIN ROUTES LOADED SUCCESSFULLY');
-console.log('========================================');
+// ============================================
+// SETTINGS
+// ============================================
+console.log('📝 Registering settings routes...');
+router.get('/settings', getSystemSettings);
+router.put('/settings', updateSystemSettings);
+console.log('✅ Settings routes registered');
+
+// ============================================
+// ARCHIVE
+// ============================================
+console.log('📝 Registering archive routes...');
+router.post('/archive/archive', archiveTerm);
+router.post('/archive/reset', resetDatabase);
+router.get('/archive/list', listArchives);
+router.get('/archive/path', getArchivesPath);
+console.log('✅ Archive routes registered');
+
+console.log('✅ ALL ADMIN ROUTES LOADED');
 
 module.exports = router;

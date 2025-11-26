@@ -89,17 +89,21 @@ export const getAuditStats = () =>
     API.get('/admin/audit-logs/stats');
 
 
-// Archive Management
+// ============================================
+// ADMIN: SYSTEM SETTINGS (NEW!)
+// ============================================
+export const getSystemSettings = () => API.get('/admin/settings');
+export const updateSystemSettings = (data) => API.put('/admin/settings', data);
+
+// ============================================
+// ADMIN: ARCHIVE MANAGEMENT (UPDATED!)
+// ============================================
 export const archiveTerm = (termName) =>
     API.post('/admin/archive/archive', { termName });
-
 export const resetDatabase = () =>
     API.post('/admin/archive/reset');
-
 export const listArchives = () =>
     API.get('/admin/archive/list');
-
 export const getArchivesPath = () =>
     API.get('/admin/archive/path');
-
 export default API;

@@ -38,7 +38,12 @@ const StudentManagement = () => {
     const [deleting, setDeleting] = useState(false);
     const [downloadingClass, setDownloadingClass] = useState(null);
 
-    const totalStudents = classes.reduce((sum, c) => sum + (typeof c === 'object' ? c.count : 0), 0);
+    // ✅ FIXED: Properly parse count as number
+    const totalStudents = classes.reduce((sum, c) => {
+        const count = typeof c === 'object' ? (Number(c.count) || 0) : 0;
+        return sum + count;
+    }, 0);
+
     const totalClasses = classes.length;
 
     const showAlert = (type, message) => {
@@ -55,9 +60,9 @@ const StudentManagement = () => {
             setLoadingClasses(true);
             const response = await getClasses();
             let classList = response.data.classes || [];
-            // Normalize: if strings, convert to {class: str, count: '?'}
+            // Normalize: if strings, convert to {class: str, count: 0}
             if (classList.length > 0 && typeof classList[0] === 'string') {
-                classList = classList.map(cls => ({ class: cls, count: '?' }));
+                classList = classList.map(cls => ({ class: cls, count: 0 }));
             }
             setClasses(classList);
         } catch (error) {
@@ -227,7 +232,7 @@ const StudentManagement = () => {
                         ) : (
                             classes.map((clsObj, index) => {
                                 const cls = typeof clsObj === 'object' ? clsObj.class : clsObj;
-                                const count = typeof clsObj === 'object' ? clsObj.count : '?';
+                                const count = typeof clsObj === 'object' ? (Number(clsObj.count) || 0) : 0;
                                 const isDownloading = downloadingClass === cls;
 
                                 return (
@@ -237,7 +242,7 @@ const StudentManagement = () => {
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                                 <span className="text-sm text-gray-600">
-                                                    {count} student{count !== 1 && count !== '?' ? 's' : ''}
+                                                    {count} student{count !== 1 ? 's' : ''}
                                                 </span>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
@@ -377,23 +382,39 @@ const StudentManagement = () => {
                 title="Student Credentials"
             >
                 <div className="space-y-4">
-                    <div className="bg-blue-50 p-4 rounded-lg">
-                        <p className="mb-2">
-                            <strong className="text-gray-700">Exam Code:</strong>
-                            <span className="font-mono text-blue-700 ml-2 break-all">
-                                {generatedCredentials?.exam_code}
-                            </span>
-                        </p>
-                        <p>
-                            <strong className="text-gray-700">Password:</strong>
-                            <span className="font-mono text-blue-700 ml-2">
-                                {generatedCredentials?.password}
-                            </span>
+                    <div className="bg-blue-50 p-4 rounded-lg border-2 border-blue-200">
+                        <div className="mb-4">
+                            <p className="text-sm text-gray-600 mb-1">Student Name:</p>
+                            <p className="font-semibold text-lg text-gray-900">
+                                {generatedCredentials?.studentName}
+                            </p>
+                        </div>
+                        <div className="mb-4">
+                            <p className="text-sm text-gray-600 mb-1">Class:</p>
+                            <p className="font-semibold text-gray-900">
+                                {generatedCredentials?.class}
+                            </p>
+                        </div>
+                        <div className="border-t border-blue-300 pt-4 mt-4">
+                            <p className="mb-3">
+                                <strong className="text-gray-700">Exam Code:</strong>
+                                <span className="font-mono text-blue-700 ml-2 text-lg break-all block mt-1">
+                                    {generatedCredentials?.examCode}
+                                </span>
+                            </p>
+                            <p>
+                                <strong className="text-gray-700">Password:</strong>
+                                <span className="font-mono text-blue-700 ml-2 text-lg">
+                                    {generatedCredentials?.password}
+                                </span>
+                            </p>
+                        </div>
+                    </div>
+                    <div className="bg-yellow-50 p-3 rounded border border-yellow-200">
+                        <p className="text-sm text-yellow-800 font-medium">
+                            ⚠️ Important: Save these credentials now. They won't be shown again.
                         </p>
                     </div>
-                    <p className="text-xs text-gray-500">
-                        Save these credentials. They won't be shown again.
-                    </p>
                     <Button onClick={() => setIsCredentialsModalOpen(false)} className="w-full">
                         Close
                     </Button>
