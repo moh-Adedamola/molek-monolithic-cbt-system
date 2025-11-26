@@ -16,12 +16,15 @@
   "afterPack": "./afterPack.js",
   "compression": "maximum",
   "asar": true,
-  "asarUnpack": [
-    "**/node_modules/better-sqlite3/**"
-  ],
-  "npmRebuild": true,
+
+  "asarUnpack": [],
+
+  "npmRebuild": false,
+  "buildDependenciesFromSource": false,
+  "nodeGypRebuild": false,
+
   "electronVersion": "28.0.0",
-  "nodeGypRebuild": true,
+
   "win": {
     "target": [
       {
@@ -32,6 +35,7 @@
     "icon": "electron/icon.ico",
     "verifyUpdateCodeSignature": false
   },
+
   "nsis": {
     "oneClick": false,
     "allowToChangeInstallationDirectory": true,
@@ -46,6 +50,7 @@
     "perMachine": true,
     "deleteAppDataOnUninstall": true
   },
+
   "publish": {
     "provider": "generic",
     "url": "https://github.com/moh-Adedamola/molek-monolithic-cbt-system/releases/latest"
