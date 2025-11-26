@@ -11,6 +11,8 @@
   ],
   "scripts": {
     "install-all": "npm install && npm install --workspace backend && npm install --workspace frontend",
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "build:win": "electron-builder --win",
     "dev": "concurrently \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\"",
     "dev:backend": "npm run dev --workspace backend",
     "dev:frontend": "npm run dev --workspace frontend",
@@ -30,6 +32,7 @@
     "cross-env": "^7.0.3",
     "electron": "28.0.0",
     "electron-builder": "24.9.1",
+    "electron-rebuild": "^3.2.9",
     "fs-extra": "^11.3.2",
     "normalize-path": "^3.0.0",
     "wait-on": "^7.2.0"
