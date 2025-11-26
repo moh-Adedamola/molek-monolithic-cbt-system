@@ -11,7 +11,7 @@
   ],
   "scripts": {
     "install-all": "npm install && npm install --workspace backend && npm install --workspace frontend",
-    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "rebuild": "electron-rebuild -f -w molek-cbt",
     "build:win": "electron-builder --win",
     "dev": "concurrently \"npm run dev --workspace backend\" \"npm run dev --workspace frontend\"",
     "dev:backend": "npm run dev --workspace backend",
@@ -20,10 +20,10 @@
     "build:frontend": "npm run build --workspace frontend",
     "build:backend": "echo Backend ready for packaging",
     "build": "npm run build:frontend && npm run build:backend",
-    "package": "npm run build && npx electron-builder@24.9.1 --win --x64 --config electron-builder.json",
+    "package": "npm run clean && npm install && npm run build && npm run rebuild && electron-builder --win portable --config electron-builder.json",
     "package:dir": "npm run build && npx electron-builder@24.9.1 --win --x64 --dir --config electron-builder.json",
     "test:electron": "cross-env NODE_ENV=development electron electron/main.js",
-    "clean": "rimraf dist-electron dist frontend/dist backend/node_modules/.cache"
+    "clean": "rimraf node_modules dist-electron dist frontend/dist backend/dist backend/node_modules/.cache"
   },
   "dependencies": {
     "concurrently": "^9.2.1"

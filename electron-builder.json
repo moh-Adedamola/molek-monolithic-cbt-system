@@ -9,6 +9,8 @@
   "files": [
     "electron/**/*",
     "frontend/dist/**/*",
+    "backend/dist/**/*",
+    "backend/node_modules/**/*",
     "package.json"
   ],
   "afterPack": "./afterPack.js",
@@ -17,10 +19,13 @@
   "asarUnpack": [
     "**/node_modules/better-sqlite3/**"
   ],
+  "npmRebuild": true,
+  "electronVersion": "28.0.0",
+  "nodeGypRebuild": true,
   "win": {
     "target": [
       {
-        "target": "nsis",
+        "target": "portable",
         "arch": ["x64"]
       }
     ],
@@ -39,7 +44,7 @@
     "shortcutName": "Molek CBT System",
     "runAfterFinish": true,
     "perMachine": true,
-    "deleteAppDataOnUninstall": false
+    "deleteAppDataOnUninstall": true
   },
   "publish": {
     "provider": "generic",
