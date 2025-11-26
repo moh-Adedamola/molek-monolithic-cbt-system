@@ -1,4 +1,3 @@
-// ✅ MUST BE FIRST - Initialize logger before anything else
 require('./utils/logger');
 
 const express = require('express');

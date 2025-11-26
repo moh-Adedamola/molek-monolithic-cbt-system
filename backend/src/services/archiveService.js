@@ -1,5 +1,5 @@
 // backend/src/services/archiveService.js
-const { all } = require('../utils/db');
+const { run, all } = require('../utils/db');
 const fs = require('fs-extra');
 const path = require('path');
 
@@ -25,7 +25,7 @@ class ArchiveService {
         const submissions = await all(`
             SELECT s.*, st.first_name, st.last_name, st.class, st.exam_code
             FROM submissions s
-            JOIN students st ON s.student_id = st.id
+                     JOIN students st ON s.student_id = st.id
             ORDER BY st.class, st.last_name, s.submitted_at
         `);
 

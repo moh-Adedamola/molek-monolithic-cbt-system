@@ -1,4 +1,4 @@
-const { getDb } = require('../utils/db');
+const { run, get, all } = require('../utils/db');
 const { verifyPassword } = require('../services/authService');
 const { getCorrectAnswers, gradeExam } = require('../services/examService');
 const { logAudit, ACTIONS } = require('../services/auditService');
@@ -25,7 +25,7 @@ async function studentLogin(req, res) {
         const activeExams = await all(`
             SELECT e.subject, e.duration_minutes
             FROM exams e
-            LEFT JOIN submissions sub ON sub.student_id = ? AND sub.subject = e.subject
+                     LEFT JOIN submissions sub ON sub.student_id = ? AND sub.subject = e.subject
             WHERE e.class = ? AND e.is_active = 1 AND sub.id IS NULL
         `, [student.id, student.class]);
 
@@ -38,12 +38,12 @@ async function studentLogin(req, res) {
             exams: activeExams
         });
     } catch (error) {
+        console.error('studentLogin error:', error);
         res.status(500).json({ error: 'Login failed' });
     }
 }
 
-function getExamQuestions(req, res) {
-    let db;
+async function getExamQuestions(req, res) {
     try {
         const { subject } = req.params;
         const { exam_code } = req.query;
@@ -51,28 +51,24 @@ function getExamQuestions(req, res) {
             return res.status(400).json({ error: 'exam_code required' });
         }
 
-        db = getDb();
-
-        const studentStmt = db.prepare(`
+        const student = await get(`
             SELECT s.id, s.class, s.first_name, s.last_name
             FROM students s
-            JOIN exams e ON s.class = e.class
-            LEFT JOIN submissions sub ON sub.student_id = s.id AND sub.subject = e.subject
+                     JOIN exams e ON s.class = e.class
+                     LEFT JOIN submissions sub ON sub.student_id = s.id AND sub.subject = e.subject
             WHERE s.exam_code = ? AND e.subject = ? AND e.is_active = 1 AND sub.id IS NULL
-        `);
-        const student = studentStmt.get(exam_code, subject);
+        `, [exam_code, subject]);
 
         if (!student) {
             return res.status(403).json({ error: 'Access denied or already submitted for this subject' });
         }
 
-        const questionsStmt = db.prepare(`
+        const questions = await all(`
             SELECT q.id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d
             FROM questions q
-            JOIN exams e ON q.exam_id = e.id
+                     JOIN exams e ON q.exam_id = e.id
             WHERE e.subject = ? AND e.class = ?
-        `);
-        const questions = questionsStmt.all(subject, student.class);
+        `, [subject, student.class]);
 
         // Audit log
         logAudit({
@@ -91,10 +87,8 @@ function getExamQuestions(req, res) {
 
         res.json({ subject, questions });
     } catch (error) {
-        console.error('💥 getExamQuestions - Error details:', error);
+        console.error('getExamQuestions error:', error);
         res.status(500).json({ error: 'Questions fetch failed' });
-    } finally {
-        if (db) db.close();
     }
 }
 
@@ -105,7 +99,7 @@ async function submitExam(req, res) {
     try {
         const student = await get(`
             SELECT s.id, s.class FROM students s
-            LEFT JOIN submissions sub ON sub.student_id = s.id AND sub.subject = ?
+                                          LEFT JOIN submissions sub ON sub.student_id = s.id AND sub.subject = ?
             WHERE s.exam_code = ? AND sub.id IS NULL
         `, [subject, exam_code]);
 
@@ -124,8 +118,10 @@ async function submitExam(req, res) {
 
         res.json({ score, total, percentage: Math.round((score / total) * 100) });
     } catch (error) {
+        console.error('submitExam error:', error);
         logAudit({ action: ACTIONS.EXAM_SUBMISSION_FAILED, userType: 'student', userIdentifier: exam_code || 'unknown', status: 'failure' });
         res.status(500).json({ error: 'Submission failed' });
     }
 }
+
 module.exports = { studentLogin, getExamQuestions, submitExam };

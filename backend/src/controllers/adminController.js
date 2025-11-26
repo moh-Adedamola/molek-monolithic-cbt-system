@@ -101,15 +101,25 @@ async function bulkCreateStudents(req, res) {
 
 async function getClasses(req, res) {
     try {
-        const rows = await all('SELECT DISTINCT class FROM students ORDER BY class');
-        res.json({ classes: rows.map(r => r.class) });
+        const rows = await all(`
+            SELECT
+                class,
+                COUNT(*) as count
+            FROM students
+            GROUP BY class
+            ORDER BY class
+        `);
+
+        console.log('📚 Classes with counts:', rows);
+
+        res.json({ classes: rows });
     } catch (error) {
+        console.error('❌ getClasses error:', error);
         res.status(500).json({ error: 'Failed to get classes' });
     }
 }
 
-function deleteStudentsByClass(req, res) {
-    let db;
+async function deleteStudentsByClass(req, res) {
     try {
         const { class: classLevel } = req.body;
 
@@ -117,9 +127,7 @@ function deleteStudentsByClass(req, res) {
             return res.status(400).json({ error: 'class required' });
         }
 
-        db = getDb();
-        const stmt = db.prepare('DELETE FROM students WHERE class = ?');
-        const result = stmt.run(classLevel);
+        const result = await run('DELETE FROM students WHERE class = ?', [classLevel]);
 
         // Audit log
         logAudit({
@@ -136,13 +144,10 @@ function deleteStudentsByClass(req, res) {
     } catch (error) {
         console.error('Delete class error:', error);
         res.status(500).json({ error: 'Failed to delete class' });
-    } finally {
-        if (db) db.close();
     }
 }
 
-function exportStudentsByClass(req, res) {
-    let db;
+async function exportStudentsByClass(req, res) {
     try {
         const { class: classLevel } = req.query;
 
@@ -150,14 +155,12 @@ function exportStudentsByClass(req, res) {
             return res.status(400).json({ error: 'class parameter required' });
         }
 
-        db = getDb();
-        const stmt = db.prepare(`
+        const students = await all(`
             SELECT first_name, middle_name, last_name, class, student_id, exam_code, plain_password
             FROM students
             WHERE class = ?
             ORDER BY last_name, first_name
-        `);
-        const students = stmt.all(classLevel);
+        `, [classLevel]);
 
         console.log(`📥 Exporting ${students.length} students from ${classLevel} with passwords`);
 
@@ -185,8 +188,6 @@ function exportStudentsByClass(req, res) {
     } catch (error) {
         console.error('❌ Export students error:', error);
         res.status(500).json({ error: 'Failed to export students' });
-    } finally {
-        if (db) db.close();
     }
 }
 
@@ -195,7 +196,6 @@ function exportStudentsByClass(req, res) {
 // ============================================
 
 async function uploadQuestions(req, res) {
-    let db;
     try {
         const { subject, class: classLevel } = req.body;
 
@@ -208,27 +208,18 @@ async function uploadQuestions(req, res) {
             return res.status(400).json({ error: 'CSV is empty' });
         }
 
-        db = getDb();
-
         // Get or create exam
-        let examStmt = db.prepare('SELECT id FROM exams WHERE subject = ? AND class = ?');
-        let exam = examStmt.get(subject, classLevel);
+        let exam = await get('SELECT id FROM exams WHERE subject = ? AND class = ?', [subject, classLevel]);
 
         if (!exam) {
-            const insertExam = db.prepare(`
+            const result = await run(`
                 INSERT INTO exams (subject, class, is_active, duration_minutes)
                 VALUES (?, ?, 0, 60)
-            `);
-            const result = insertExam.run(subject, classLevel);
-            exam = { id: result.lastInsertRowid };
+            `, [subject, classLevel]);
+            exam = { id: result.lastID };
         }
 
         // Insert questions
-        const insertStmt = db.prepare(`
-            INSERT INTO questions (exam_id, question_text, option_a, option_b, option_c, option_d, correct_answer)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `);
-
         let count = 0;
         for (const row of rows) {
             const question = row.question_text?.trim();
@@ -241,7 +232,10 @@ async function uploadQuestions(req, res) {
             if (!question || !optA || !optB || !optC || !optD || !correct) continue;
             if (!['A', 'B', 'C', 'D'].includes(correct)) continue;
 
-            insertStmt.run(exam.id, question, optA, optB, optC, optD, correct);
+            await run(`
+                INSERT INTO questions (exam_id, question_text, option_a, option_b, option_c, option_d, correct_answer)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            `, [exam.id, question, optA, optB, optC, optD, correct]);
             count++;
         }
 
@@ -268,34 +262,26 @@ async function uploadQuestions(req, res) {
             status: 'failure'
         });
         res.status(500).json({ error: 'Failed to upload questions' });
-    } finally {
-        if (db) db.close();
     }
 }
 
-function getAllQuestions(req, res) {
-    let db;
+async function getAllQuestions(req, res) {
     try {
-        db = getDb();
-        const stmt = db.prepare(`
+        const questions = await all(`
             SELECT q.*, e.subject, e.class, e.is_active, e.duration_minutes
             FROM questions q
-            JOIN exams e ON q.exam_id = e.id
+                     JOIN exams e ON q.exam_id = e.id
             ORDER BY e.subject, e.class, q.id
         `);
-        const questions = stmt.all();
 
         res.json({ questions });
     } catch (error) {
         console.error('Get questions error:', error);
         res.status(500).json({ error: 'Failed to get questions' });
-    } finally {
-        if (db) db.close();
     }
 }
 
-function activateExam(req, res) {
-    let db;
+async function activateExam(req, res) {
     try {
         const { subject, class: classLevel, is_active } = req.body;
 
@@ -303,9 +289,7 @@ function activateExam(req, res) {
             return res.status(400).json({ error: 'subject, class, and is_active required' });
         }
 
-        db = getDb();
-        const stmt = db.prepare('UPDATE exams SET is_active = ? WHERE subject = ? AND class = ?');
-        const result = stmt.run(is_active ? 1 : 0, subject, classLevel);
+        const result = await run('UPDATE exams SET is_active = ? WHERE subject = ? AND class = ?', [is_active ? 1 : 0, subject, classLevel]);
 
         if (result.changes === 0) {
             return res.status(404).json({ error: 'Exam not found' });
@@ -326,17 +310,13 @@ function activateExam(req, res) {
     } catch (error) {
         console.error('Activate exam error:', error);
         res.status(500).json({ error: 'Failed to update exam status' });
-    } finally {
-        if (db) db.close();
     }
 }
 
-function getAllExams(req, res) {
-    let db;
+async function getAllExams(req, res) {
     try {
-        db = getDb();
-        const stmt = db.prepare(`
-            SELECT 
+        const exams = await all(`
+            SELECT
                 e.id,
                 e.subject,
                 e.class,
@@ -345,29 +325,24 @@ function getAllExams(req, res) {
                 e.created_at,
                 COUNT(q.id) as total_questions
             FROM exams e
-            LEFT JOIN questions q ON e.id = q.exam_id
+                     LEFT JOIN questions q ON e.id = q.exam_id
             GROUP BY e.id
             ORDER BY e.created_at DESC
         `);
-        const exams = stmt.all();
 
         res.json({ exams });
     } catch (error) {
         console.error('Get exams error:', error);
         res.status(500).json({ error: 'Failed to get exams' });
-    } finally {
-        if (db) db.close();
     }
 }
 
-function getExamById(req, res) {
-    let db;
+async function getExamById(req, res) {
     try {
         const { id } = req.params;
-        db = getDb();
 
-        const examStmt = db.prepare(`
-            SELECT 
+        const exam = await get(`
+            SELECT
                 e.id,
                 e.subject,
                 e.class,
@@ -376,30 +351,25 @@ function getExamById(req, res) {
                 e.created_at,
                 COUNT(q.id) as total_questions
             FROM exams e
-            LEFT JOIN questions q ON e.id = q.exam_id
+                     LEFT JOIN questions q ON e.id = q.exam_id
             WHERE e.id = ?
             GROUP BY e.id
-        `);
-        const exam = examStmt.get(id);
+        `, [id]);
 
         if (!exam) {
             return res.status(404).json({ error: 'Exam not found' });
         }
 
-        const questionsStmt = db.prepare('SELECT * FROM questions WHERE exam_id = ?');
-        const questions = questionsStmt.all(id);
+        const questions = await all('SELECT * FROM questions WHERE exam_id = ?', [id]);
 
         res.json({ exam, questions });
     } catch (error) {
         console.error('Get exam error:', error);
         res.status(500).json({ error: 'Failed to get exam' });
-    } finally {
-        if (db) db.close();
     }
 }
 
-function updateExam(req, res) {
-    let db;
+async function updateExam(req, res) {
     try {
         const { id } = req.params;
         const { duration_minutes } = req.body;
@@ -408,9 +378,7 @@ function updateExam(req, res) {
             return res.status(400).json({ error: 'duration_minutes required' });
         }
 
-        db = getDb();
-        const stmt = db.prepare('UPDATE exams SET duration_minutes = ? WHERE id = ?');
-        const result = stmt.run(duration_minutes, id);
+        const result = await run('UPDATE exams SET duration_minutes = ? WHERE id = ?', [duration_minutes, id]);
 
         if (result.changes === 0) {
             return res.status(404).json({ error: 'Exam not found' });
@@ -431,23 +399,17 @@ function updateExam(req, res) {
     } catch (error) {
         console.error('Update exam error:', error);
         res.status(500).json({ error: 'Failed to update exam' });
-    } finally {
-        if (db) db.close();
     }
 }
 
-function deleteExam(req, res) {
-    let db;
+async function deleteExam(req, res) {
     try {
         const { id } = req.params;
-        db = getDb();
 
         // Get exam details before deleting
-        const examStmt = db.prepare('SELECT subject, class FROM exams WHERE id = ?');
-        const exam = examStmt.get(id);
+        const exam = await get('SELECT subject, class FROM exams WHERE id = ?', [id]);
 
-        const stmt = db.prepare('DELETE FROM exams WHERE id = ?');
-        const result = stmt.run(id);
+        const result = await run('DELETE FROM exams WHERE id = ?', [id]);
 
         if (result.changes === 0) {
             return res.status(404).json({ error: 'Exam not found' });
@@ -470,8 +432,6 @@ function deleteExam(req, res) {
     } catch (error) {
         console.error('Delete exam error:', error);
         res.status(500).json({ error: 'Failed to delete exam' });
-    } finally {
-        if (db) db.close();
     }
 }
 
@@ -488,8 +448,7 @@ async function getSubjects(req, res) {
 // RESULTS
 // ============================================
 
-function getClassResults(req, res) {
-    let db;
+async function getClassResults(req, res) {
     try {
         const { class: classLevel } = req.query;
 
@@ -497,9 +456,8 @@ function getClassResults(req, res) {
             return res.status(400).json({ error: 'class parameter required' });
         }
 
-        db = getDb();
-        const stmt = db.prepare(`
-            SELECT 
+        const results = await all(`
+            SELECT
                 s.first_name,
                 s.middle_name,
                 s.last_name,
@@ -510,23 +468,19 @@ function getClassResults(req, res) {
                 sub.total_questions,
                 sub.submitted_at
             FROM submissions sub
-            JOIN students s ON sub.student_id = s.id
+                     JOIN students s ON sub.student_id = s.id
             WHERE s.class = ?
             ORDER BY s.last_name, s.first_name, sub.subject
-        `);
-        const results = stmt.all(classLevel);
+        `, [classLevel]);
 
         res.json({ results });
     } catch (error) {
         console.error('Get class results error:', error);
         res.status(500).json({ error: 'Failed to get results' });
-    } finally {
-        if (db) db.close();
     }
 }
 
-function exportClassResultsAsText(req, res) {
-    let db;
+async function exportClassResultsAsText(req, res) {
     try {
         const { class: classLevel, subject } = req.query;
 
@@ -534,9 +488,8 @@ function exportClassResultsAsText(req, res) {
             return res.status(400).json({ error: 'class and subject parameters required' });
         }
 
-        db = getDb();
-        const stmt = db.prepare(`
-            SELECT 
+        const results = await all(`
+            SELECT
                 s.first_name,
                 s.middle_name,
                 s.last_name,
@@ -545,11 +498,10 @@ function exportClassResultsAsText(req, res) {
                 sub.total_questions,
                 sub.submitted_at
             FROM submissions sub
-            JOIN students s ON sub.student_id = s.id
+                     JOIN students s ON sub.student_id = s.id
             WHERE s.class = ? AND sub.subject = ?
             ORDER BY s.last_name, s.first_name
-        `);
-        const results = stmt.all(classLevel, subject);
+        `, [classLevel, subject]);
 
         let text = `EXAM RESULTS: ${subject} - ${classLevel}\n`;
         text += `Generated: ${new Date().toLocaleString()}\n`;
@@ -571,18 +523,15 @@ function exportClassResultsAsText(req, res) {
     } catch (error) {
         console.error('Export results error:', error);
         res.status(500).json({ error: 'Failed to export results' });
-    } finally {
-        if (db) db.close();
     }
 }
 
-function getFilteredResults(req, res) {
-    let db;
+async function getFilteredResults(req, res) {
     try {
         const { class: classLevel, subject, from_date, to_date } = req.query;
 
         let query = `
-            SELECT 
+            SELECT
                 s.first_name,
                 s.middle_name,
                 s.last_name,
@@ -593,7 +542,7 @@ function getFilteredResults(req, res) {
                 sub.total_questions,
                 sub.submitted_at
             FROM submissions sub
-            JOIN students s ON sub.student_id = s.id
+                     JOIN students s ON sub.student_id = s.id
             WHERE 1=1
         `;
         const params = [];
@@ -620,9 +569,7 @@ function getFilteredResults(req, res) {
 
         query += ' ORDER BY sub.submitted_at DESC';
 
-        db = getDb();
-        const stmt = db.prepare(query);
-        const results = stmt.all(...params);
+        const results = await all(query, params);
 
         // Generate CSV
         const csvHeader = 'first_name,middle_name,last_name,class,exam_code,subject,score,total_questions,percentage,submitted_at\n';
@@ -639,8 +586,6 @@ function getFilteredResults(req, res) {
     } catch (error) {
         console.error('Filtered results error:', error);
         res.status(500).json({ error: 'Failed to get filtered results' });
-    } finally {
-        if (db) db.close();
     }
 }
 
@@ -650,25 +595,37 @@ function getFilteredResults(req, res) {
 
 async function getDashboardStats(req, res) {
     try {
-        const totalStudents = (await all('SELECT COUNT(*) as c FROM students'))[0].c;
-        const totalExams = (await all('SELECT COUNT(*) as c FROM exams'))[0].c;
-        const activeExams = (await all('SELECT COUNT(*) as c FROM exams WHERE is_active = 1'))[0].c;
-        const totalSubmissions = (await all('SELECT COUNT(*) as c FROM submissions'))[0].c;
+        const studentsResult = await all('SELECT COUNT(*) as c FROM students');
+        const examsResult = await all('SELECT COUNT(*) as c FROM exams');
+        const activeExamsResult = await all('SELECT COUNT(*) as c FROM exams WHERE is_active = 1');
+        const submissionsResult = await all('SELECT COUNT(*) as c FROM submissions');
+
+        console.log('📊 Dashboard Stats Debug:');
+        console.log('  Students result:', studentsResult);
+        console.log('  Exams result:', examsResult);
+        console.log('  Active exams result:', activeExamsResult);
+        console.log('  Submissions result:', submissionsResult);
+
+        const totalStudents = studentsResult[0].c;
+        const totalExams = examsResult[0].c;
+        const activeExams = activeExamsResult[0].c;
+        const totalSubmissions = submissionsResult[0].c;
+
+        console.log('📊 Final Stats:', { totalStudents, totalExams, activeExams, totalSubmissions });
 
         res.json({ totalStudents, totalExams, activeExams, totalSubmissions });
     } catch (error) {
+        console.error('❌ getDashboardStats error:', error);
         res.status(500).json({ error: 'Failed to get stats' });
     }
 }
 
-function getRecentSubmissions(req, res) {
-    let db;
+async function getRecentSubmissions(req, res) {
     try {
         const limit = parseInt(req.query.limit) || 10;
 
-        db = getDb();
-        const stmt = db.prepare(`
-            SELECT 
+        const submissions = await all(`
+            SELECT
                 s.first_name,
                 s.last_name,
                 sub.subject,
@@ -676,18 +633,15 @@ function getRecentSubmissions(req, res) {
                 sub.total_questions,
                 sub.submitted_at
             FROM submissions sub
-            JOIN students s ON sub.student_id = s.id
+                     JOIN students s ON sub.student_id = s.id
             ORDER BY sub.submitted_at DESC
-            LIMIT ?
-        `);
-        const submissions = stmt.all(limit);
+                LIMIT ?
+        `, [limit]);
 
         res.json({ submissions });
     } catch (error) {
         console.error('Recent submissions error:', error);
         res.status(500).json({ error: 'Failed to get recent submissions' });
-    } finally {
-        if (db) db.close();
     }
 }
 
@@ -695,33 +649,27 @@ function getRecentSubmissions(req, res) {
 // MONITORING
 // ============================================
 
-function getActiveExamSessions(req, res) {
-    let db;
+async function getActiveExamSessions(req, res) {
     try {
-        db = getDb();
-
         // Get active exams with student counts
-        const stmt = db.prepare(`
-            SELECT 
+        const sessions = await all(`
+            SELECT
                 e.subject,
                 e.class,
                 e.duration_minutes,
                 COUNT(DISTINCT s.id) as registered_students,
                 COUNT(DISTINCT sub.student_id) as completed_students
             FROM exams e
-            JOIN students s ON e.class = s.class
-            LEFT JOIN submissions sub ON sub.student_id = s.id AND sub.subject = e.subject
+                     JOIN students s ON e.class = s.class
+                     LEFT JOIN submissions sub ON sub.student_id = s.id AND sub.subject = e.subject
             WHERE e.is_active = 1
             GROUP BY e.id
         `);
-        const sessions = stmt.all();
 
         res.json({ sessions });
     } catch (error) {
         console.error('Get sessions error:', error);
         res.status(500).json({ error: 'Failed to get active sessions' });
-    } finally {
-        if (db) db.close();
     }
 }
 
