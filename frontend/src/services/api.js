@@ -9,6 +9,9 @@ export const studentLogin = (data) => API.post('/students/login', data);
 export const submitExam = (data) => API.post('/students/submit', data);
 export const getExamQuestions = (subject, examCode) =>
     API.get(`/students/exam/${subject}`, { params: { exam_code: examCode } });
+export const saveExamProgress = (data) => API.post('/students/save-progress', data);
+
+
 
 // ============================================
 // ADMIN: STUDENTS
@@ -90,13 +93,13 @@ export const getAuditStats = () =>
 
 
 // ============================================
-// ADMIN: SYSTEM SETTINGS (NEW!)
+// ADMIN: SYSTEM SETTINGS
 // ============================================
 export const getSystemSettings = () => API.get('/admin/settings');
 export const updateSystemSettings = (data) => API.put('/admin/settings', data);
 
 // ============================================
-// ADMIN: ARCHIVE MANAGEMENT (UPDATED!)
+// ADMIN: ARCHIVE MANAGEMENT
 // ============================================
 export const archiveTerm = (termName) =>
     API.post('/admin/archive/archive', { termName });

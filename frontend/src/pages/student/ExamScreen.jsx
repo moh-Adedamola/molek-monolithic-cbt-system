@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getExamQuestions, submitExam } from '../../services/api';
-import { Clock, ArrowLeft, ArrowRight, AlertCircle, CheckCircle, Circle, Loader2 } from 'lucide-react';
+import { getExamQuestions, submitExam, saveExamProgress } from '../../services/api';
+import { Clock, ArrowLeft, ArrowRight, AlertCircle, CheckCircle, Circle, Loader2, Save } from 'lucide-react';
 
 export default function ExamScreen() {
     const { subject } = useParams();
@@ -11,47 +11,167 @@ export default function ExamScreen() {
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
-    const [timeLeft, setTimeLeft] = useState(0);
+    const [timeLeft, setTimeLeft] = useState(null);
     const [showSubmitDialog, setShowSubmitDialog] = useState(false);
+    const [error, setError] = useState('');
+    const [lastSaved, setLastSaved] = useState(null);
+    const [saving, setSaving] = useState(false);
+    const timerRef = useRef(null);
+    const autoSaveRef = useRef(null);
     const examCode = localStorage.getItem('examCode');
-    const durationMinutes = parseInt(localStorage.getItem('examDuration')) || 60;
 
     useEffect(() => {
-        if (!examCode) return navigate('/');
-        setTimeLeft(durationMinutes * 60);
+        if (!examCode) {
+            navigate('/');
+            return;
+        }
 
-        getExamQuestions(subject, examCode)
-            .then(res => {
-                const fetchedQuestions = res.data.questions || [];
-                if (fetchedQuestions.length === 0) {
-                    alert('No questions available.');
-                    return navigate('/exam-select');
-                }
-                setQuestions(fetchedQuestions);
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error('Load error:', err);
-                alert('Failed to load exam');
-                navigate('/exam-select');
-            });
+        loadExam();
 
-        const timerId = setInterval(() => {
-            setTimeLeft(prev => {
-                if (prev <= 1) {
-                    clearInterval(timerId);
-                    handleSubmit(true);
-                    return 0;
+        // ✅ Cleanup on unmount
+        return () => {
+            if (timerRef.current) {
+                clearInterval(timerRef.current);
+            }
+            if (autoSaveRef.current) {
+                clearInterval(autoSaveRef.current);
+            }
+        };
+    }, [subject, examCode, navigate]);
+
+    // ✅ NEW: Auto-save answers every 10 seconds
+    useEffect(() => {
+        if (questions.length > 0 && Object.keys(answers).length > 0) {
+            // Clear existing auto-save timer
+            if (autoSaveRef.current) {
+                clearInterval(autoSaveRef.current);
+            }
+
+            // Set up auto-save every 10 seconds
+            autoSaveRef.current = setInterval(() => {
+                saveProgress();
+            }, 10000); // 10 seconds
+
+            return () => {
+                if (autoSaveRef.current) {
+                    clearInterval(autoSaveRef.current);
                 }
-                return prev - 1;
+            };
+        }
+    }, [answers, questions]);
+
+    const loadExam = async () => {
+        try {
+            setLoading(true);
+            setError('');
+
+            const res = await getExamQuestions(subject, examCode);
+            const fetchedQuestions = res.data.questions || [];
+
+            if (fetchedQuestions.length === 0) {
+                setError('No questions available for this exam.');
+                setTimeout(() => navigate('/exam-select'), 2000);
+                return;
+            }
+
+            setQuestions(fetchedQuestions);
+
+            const backendTimeRemaining = res.data.time_remaining;
+            const examStartedAt = res.data.exam_started_at;
+            const savedAnswers = res.data.saved_answers || {}; // ✅ NEW: Load saved answers
+
+            console.log('⏱️  Exam loaded:');
+            console.log('   Subject:', subject);
+            console.log('   Started at:', examStartedAt);
+            console.log('   Time remaining:', backendTimeRemaining, 'seconds');
+            console.log('   Questions:', fetchedQuestions.length);
+            console.log('   Saved answers:', Object.keys(savedAnswers).length);
+
+            // ✅ NEW: Restore saved answers
+            if (savedAnswers && Object.keys(savedAnswers).length > 0) {
+                setAnswers(savedAnswers);
+                setLastSaved(new Date());
+                console.log(`📝 Restored ${Object.keys(savedAnswers).length} saved answers`);
+            }
+
+            if (backendTimeRemaining <= 0) {
+                alert('⏰ Your exam time has expired!');
+                handleSubmit(true);
+                return;
+            }
+
+            setTimeLeft(backendTimeRemaining);
+            startTimer(backendTimeRemaining);
+            setLoading(false);
+        } catch (err) {
+            console.error('❌ Load exam error:', err);
+
+            if (err.response?.data?.timeExpired) {
+                setError('Your exam time has expired.');
+                setTimeout(() => navigate('/exam-select'), 2000);
+            } else if (err.response?.data?.error) {
+                setError(err.response.data.error);
+                setTimeout(() => navigate('/exam-select'), 3000);
+            } else {
+                setError('Failed to load exam. Please try again.');
+                setTimeout(() => navigate('/exam-select'), 2000);
+            }
+        }
+    };
+
+    // ✅ NEW: Save progress to backend
+    const saveProgress = async () => {
+        if (Object.keys(answers).length === 0 || submitting) {
+            return;
+        }
+
+        try {
+            setSaving(true);
+            await saveExamProgress({
+                exam_code: examCode,
+                subject,
+                answers
             });
+            setLastSaved(new Date());
+            console.log(`💾 Auto-saved ${Object.keys(answers).length} answers`);
+        } catch (err) {
+            console.error('❌ Auto-save failed:', err);
+            // Don't show error to user - silent failure for auto-save
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const startTimer = (initialSeconds) => {
+        if (timerRef.current) {
+            clearInterval(timerRef.current);
+        }
+
+        let seconds = initialSeconds;
+
+        timerRef.current = setInterval(() => {
+            seconds--;
+            setTimeLeft(seconds);
+
+            if (seconds === 300) {
+                alert('⚠️ Warning: 5 minutes remaining!');
+            }
+
+            if (seconds === 60) {
+                alert('⚠️ Warning: 1 minute remaining!');
+            }
+
+            if (seconds <= 0) {
+                clearInterval(timerRef.current);
+                alert('⏰ Time is up! Your exam will be auto-submitted.');
+                handleSubmit(true);
+            }
         }, 1000);
-
-        return () => clearInterval(timerId);
-    }, [subject, examCode, navigate, durationMinutes]);
+    };
 
     const handleAnswer = (qId, option) => {
         setAnswers(prev => ({ ...prev, [qId]: option }));
+        // Note: Auto-save will happen in the next 10-second interval
     };
 
     const handleNext = () => {
@@ -66,30 +186,64 @@ export default function ExamScreen() {
         }
     };
 
-    const handleSubmit = async (timeout = false) => {
+    const handleSubmit = async (isAutoSubmit = false) => {
         if (submitting) return;
 
         const unanswered = questions.length - Object.keys(answers).length;
-        if (!timeout && unanswered > 0) {
+
+        if (!isAutoSubmit && unanswered > 0) {
             setShowSubmitDialog(true);
             return;
         }
 
         setSubmitting(true);
+
+        // Clear timers
+        if (timerRef.current) {
+            clearInterval(timerRef.current);
+        }
+        if (autoSaveRef.current) {
+            clearInterval(autoSaveRef.current);
+        }
+
         try {
             const res = await submitExam({ exam_code: examCode, answers, subject });
+
             localStorage.removeItem('examCode');
             localStorage.removeItem('activeExams');
             localStorage.removeItem('examDuration');
+            localStorage.removeItem('studentName');
 
-            // Show success modal
-            // alert(`Exam Submitted Successfully!\n\nScore: ${res.data.score}/${res.data.total}\nPercentage: ${res.data.percentage}%`);
-            alert(`Exam Submitted Successfully!\n\nScore:`);
+            alert(
+                `✅ Exam Submitted Successfully!\n\n` +
+                `Score: ${res.data.score}/${res.data.total}\n` +
+                `Percentage: ${res.data.percentage}%`
+            );
+
             navigate('/');
         } catch (err) {
-            console.error('Submit error:', err);
-            alert('Submission failed: ' + (err.response?.data?.error || 'Unknown error'));
-            setSubmitting(false);
+            console.error('❌ Submit error:', err);
+
+            if (timerRef.current) {
+                clearInterval(timerRef.current);
+            }
+            if (autoSaveRef.current) {
+                clearInterval(autoSaveRef.current);
+            }
+
+            if (err.response?.data?.timeExpired) {
+                alert('⏰ Exam time has expired. Your answers could not be submitted.');
+                localStorage.clear();
+                navigate('/');
+            } else {
+                const errorMsg = err.response?.data?.error || 'Submission failed. Please try again.';
+                alert('❌ Submission Failed:\n\n' + errorMsg);
+                setSubmitting(false);
+
+                if (timeLeft > 0) {
+                    startTimer(timeLeft);
+                }
+            }
         }
     };
 
@@ -99,6 +253,24 @@ export default function ExamScreen() {
                 <div className="text-center">
                     <Loader2 className="animate-spin h-16 w-16 text-blue-600 mx-auto mb-4" />
                     <p className="text-gray-600 text-lg">Loading your exam...</p>
+                </div>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center p-4">
+                <div className="bg-white rounded-lg shadow-xl p-8 max-w-md text-center">
+                    <AlertCircle className="h-16 w-16 text-red-500 mx-auto mb-4" />
+                    <h2 className="text-2xl font-bold text-gray-900 mb-2">Error</h2>
+                    <p className="text-gray-600 mb-6">{error}</p>
+                    <button
+                        onClick={() => navigate('/exam-select')}
+                        className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                        Back to Exams
+                    </button>
                 </div>
             </div>
         );
@@ -125,7 +297,23 @@ export default function ExamScreen() {
     const currentQ = questions[currentQuestionIndex];
     const progress = ((currentQuestionIndex + 1) / questions.length) * 100;
     const answeredCount = Object.keys(answers).length;
-    const isLowTime = timeLeft < 300; // Less than 5 minutes
+    const isLowTime = timeLeft !== null && timeLeft < 300;
+
+    const formatTime = () => {
+        if (timeLeft === null) return '--:--';
+        const mins = Math.floor(timeLeft / 60);
+        const secs = timeLeft % 60;
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
+
+    // ✅ NEW: Format last saved time
+    const formatLastSaved = () => {
+        if (!lastSaved) return 'Not saved yet';
+        const now = new Date();
+        const diff = Math.floor((now - lastSaved) / 1000);
+        if (diff < 60) return `Saved ${diff}s ago`;
+        return `Saved ${Math.floor(diff / 60)}m ago`;
+    };
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 py-4 px-4">
@@ -140,15 +328,28 @@ export default function ExamScreen() {
                                 <span className="hidden sm:inline">•</span>
                                 <span>{answeredCount}/{questions.length} answered</span>
                             </div>
+                            {/* ✅ NEW: Auto-save indicator */}
+                            <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
+                                {saving ? (
+                                    <>
+                                        <Loader2 className="h-3 w-3 animate-spin" />
+                                        <span>Saving...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Save className="h-3 w-3 text-green-600" />
+                                        <span className="text-green-600">{formatLastSaved()}</span>
+                                    </>
+                                )}
+                            </div>
                         </div>
                         <div className={`flex items-center gap-2 text-lg font-bold px-4 py-2 rounded-lg ${
                             isLowTime ? 'bg-red-100 text-red-700 animate-pulse' : 'bg-blue-100 text-blue-700'
                         }`}>
                             <Clock className="h-5 w-5" />
-                            {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
+                            {formatTime()}
                         </div>
                     </div>
-                    {/* Progress Bar */}
                     <div className="mt-4">
                         <div className="w-full bg-gray-200 rounded-full h-2">
                             <div
@@ -285,6 +486,21 @@ export default function ExamScreen() {
                         </div>
                     </div>
                 </div>
+
+                {/* Low Time Warning */}
+                {isLowTime && timeLeft > 0 && (
+                    <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 bg-orange-100 border-2 border-orange-400 rounded-lg px-6 py-3 shadow-xl z-50 animate-bounce">
+                        <div className="flex items-center gap-2 text-orange-800 font-medium">
+                            <AlertCircle className="h-5 w-5" />
+                            <span>
+                                {timeLeft < 60
+                                    ? 'Less than 1 minute remaining!'
+                                    : `${Math.floor(timeLeft / 60)} minutes remaining!`
+                                }
+                            </span>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Submit Confirmation Dialog */}

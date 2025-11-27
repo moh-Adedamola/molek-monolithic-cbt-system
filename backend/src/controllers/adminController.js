@@ -266,54 +266,146 @@ async function exportStudentsByClass(req, res) {
 
 async function uploadQuestions(req, res) {
     try {
-        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+        console.log('📤 Upload Questions Request:');
+        console.log('   File:', req.file ? req.file.originalname : 'NO FILE');
+        console.log('   Subject:', req.body.subject);
+        console.log('   Class:', req.body.class);
 
-        const csvData = req.file.buffer.toString('utf8');
-        const questions = await parseCsvBuffer(req.file.buffer);
-
-        if (questions.length === 0) {
-            return res.status(400).json({ error: 'No valid questions found in file' });
+        // ✅ Validate file
+        if (!req.file) {
+            console.error('❌ No file uploaded');
+            return res.status(400).json({ error: 'No file uploaded' });
         }
 
-        const subject = questions[0].subject;
-        const classLevel = questions[0].class;
+        // ✅ Get subject and class from form data (not from CSV!)
+        const subject = req.body.subject;
+        const classLevel = req.body.class;
 
         if (!subject || !classLevel) {
-            return res.status(400).json({ error: 'Subject and class are required in CSV' });
+            console.error('❌ Missing subject or class in form data');
+            return res.status(400).json({
+                error: 'Subject and class are required',
+                received: { subject, class: classLevel }
+            });
         }
 
-        const existingExam = await get('SELECT id FROM exams WHERE subject = ? AND class = ?', [subject, classLevel]);
+        // ✅ Parse CSV
+        const questions = await parseCsvBuffer(req.file.buffer);
+        console.log(`📋 Parsed ${questions.length} questions from CSV`);
+
+        if (questions.length === 0) {
+            console.error('❌ No valid questions found in file');
+            return res.status(400).json({ error: 'No valid questions found in CSV file' });
+        }
+
+        // ✅ Validate question format
+        const firstQuestion = questions[0];
+        const requiredFields = ['question_text', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer'];
+        const missingFields = requiredFields.filter(field => !firstQuestion[field]);
+
+        if (missingFields.length > 0) {
+            console.error('❌ Missing fields in CSV:', missingFields);
+            return res.status(400).json({
+                error: 'Invalid CSV format',
+                missing_fields: missingFields,
+                required_fields: requiredFields,
+                sample: 'question_text,option_a,option_b,option_c,option_d,correct_answer'
+            });
+        }
+
+        // ✅ Check if exam already exists
+        const existingExam = await get(
+            'SELECT id FROM exams WHERE subject = ? AND class = ?',
+            [subject, classLevel]
+        );
+
         let examId;
 
         if (existingExam) {
             examId = existingExam.id;
-            await run('DELETE FROM questions WHERE exam_id = ?', [examId]);
+            console.log(`🔄 Updating existing exam (ID: ${examId})`);
+
+            // Delete old questions
+            const deleted = await run('DELETE FROM questions WHERE exam_id = ?', [examId]);
+            console.log(`🗑️  Deleted ${deleted.changes} old questions`);
         } else {
-            const result = await run('INSERT INTO exams (subject, class, duration_minutes, is_active) VALUES (?, ?, 60, 0)', [subject, classLevel]);
+            console.log('🆕 Creating new exam');
+            const result = await run(
+                'INSERT INTO exams (subject, class, duration_minutes, is_active) VALUES (?, ?, 60, 0)',
+                [subject, classLevel]
+            );
             examId = result.lastID;
+            console.log(`✅ Created exam (ID: ${examId})`);
         }
 
+        // ✅ Insert questions
+        let insertedCount = 0;
         for (const q of questions) {
-            await run(`
-                INSERT INTO questions (exam_id, question_text, option_a, option_b, option_c, option_d, correct_answer)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            `, [examId, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_answer]);
+            try {
+                await run(`
+                    INSERT INTO questions (
+                        exam_id, question_text, option_a, option_b, option_c, option_d, correct_answer
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                `, [
+                    examId,
+                    q.question_text,
+                    q.option_a,
+                    q.option_b,
+                    q.option_c,
+                    q.option_d,
+                    q.correct_answer.toUpperCase() // Ensure uppercase (A, B, C, D)
+                ]);
+                insertedCount++;
+            } catch (err) {
+                console.error(`❌ Failed to insert question: ${q.question_text}`, err);
+            }
         }
 
-        logAudit({
+        console.log(`✅ Inserted ${insertedCount} questions`);
+
+        // ✅ Audit log
+        await logAudit({
             action: ACTIONS.QUESTIONS_UPLOADED,
             userType: 'admin',
             userIdentifier: 'admin',
-            details: `Uploaded ${questions.length} questions for ${subject} (${classLevel})`,
+            details: `Uploaded ${insertedCount} questions for ${subject} (${classLevel})`,
             ipAddress: getClientIp(req),
             status: 'success',
-            metadata: { subject, class: classLevel, questionCount: questions.length, examId }
+            metadata: {
+                subject,
+                class: classLevel,
+                questionCount: insertedCount,
+                examId,
+                fileName: req.file.originalname
+            }
         });
 
-        res.json({ message: `${questions.length} questions uploaded for ${subject} (${classLevel})`, examId });
+        res.json({
+            success: true,
+            message: `Successfully uploaded ${insertedCount} questions for ${subject} (${classLevel})`,
+            examId,
+            questionCount: insertedCount,
+            subject,
+            class: classLevel
+        });
     } catch (error) {
-        console.error('Upload questions error:', error);
-        res.status(500).json({ error: 'Failed to upload questions' });
+        console.error('❌ Upload questions error:', error);
+
+        await logAudit({
+            action: ACTIONS.QUESTIONS_UPLOAD_FAILED,
+            userType: 'admin',
+            userIdentifier: 'admin',
+            details: `Failed to upload questions: ${error.message}`,
+            ipAddress: getClientIp(req),
+            status: 'failure',
+            metadata: { error: error.message }
+        });
+
+        res.status(500).json({
+            error: 'Failed to upload questions',
+            details: error.message
+        });
     }
 }
 

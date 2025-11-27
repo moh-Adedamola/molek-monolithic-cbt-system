@@ -105,11 +105,171 @@ async function all(sql, params = []) {
 }
 
 /**
+ * ✅ Check database version and run migrations if needed
+ */
+async function checkAndRunMigrations() {
+    try {
+        console.log('🔍 Checking database version...');
+
+        // Create migrations table if it doesn't exist
+        await run(`
+            CREATE TABLE IF NOT EXISTS migrations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version INTEGER NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+
+        // Get current version
+        const currentVersion = await get('SELECT MAX(version) as version FROM migrations');
+        const dbVersion = currentVersion?.version || 0;
+
+        console.log(`📊 Current database version: ${dbVersion}`);
+
+        // Define all migrations
+        const migrations = [
+            {
+                version: 1,
+                name: 'Add timer tracking columns to submissions',
+                migrate: async () => {
+                    console.log('🔧 Running migration 1: Add timer tracking...');
+
+                    // Check if submissions table exists
+                    const tableExists = await get(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='submissions'"
+                    );
+
+                    if (!tableExists) {
+                        console.log('ℹ️  Submissions table does not exist yet, will be created fresh');
+                        return; // Table will be created by initDatabase
+                    }
+
+                    // Check current schema
+                    const columns = await all('PRAGMA table_info(submissions)');
+                    const columnNames = columns.map(col => col.name);
+
+                    console.log('📋 Current columns:', columnNames);
+
+                    // Check if migration is needed
+                    const needsMigration =
+                        !columnNames.includes('exam_started_at') ||
+                        !columnNames.includes('duration_minutes') ||
+                        columns.find(col => col.name === 'answers' && col.notnull === 1); // Check if answers is NOT NULL
+
+                    if (!needsMigration) {
+                        console.log('✅ Schema already up to date, skipping migration');
+                        return;
+                    }
+
+                    console.log('⚠️  Migration needed: Updating submissions table schema...');
+
+                    // Get current data
+                    const existingData = await all('SELECT * FROM submissions');
+                    console.log(`📦 Found ${existingData.length} existing submissions to preserve`);
+
+                    // Create new table with correct schema
+                    await run(`
+                        CREATE TABLE submissions_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            student_id INTEGER NOT NULL,
+                            subject TEXT NOT NULL,
+                            exam_started_at DATETIME,
+                            duration_minutes INTEGER,
+                            answers TEXT,
+                            score INTEGER,
+                            total_questions INTEGER,
+                            submitted_at DATETIME,
+                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                            FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
+                        )
+                    `);
+
+                    // Migrate existing data
+                    if (existingData.length > 0) {
+                        for (const row of existingData) {
+                            await run(`
+                                INSERT INTO submissions_new (
+                                    id, student_id, subject, exam_started_at, duration_minutes,
+                                    answers, score, total_questions, submitted_at, created_at
+                                )
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            `, [
+                                row.id,
+                                row.student_id,
+                                row.subject,
+                                row.exam_started_at || null,
+                                row.duration_minutes || null,
+                                row.answers,
+                                row.score,
+                                row.total_questions,
+                                row.submitted_at,
+                                row.created_at
+                            ]);
+                        }
+                        console.log(`✅ Migrated ${existingData.length} submissions`);
+                    }
+
+                    // Drop old table and rename new one
+                    await run('DROP TABLE submissions');
+                    await run('ALTER TABLE submissions_new RENAME TO submissions');
+
+                    // Recreate indexes
+                    await run('CREATE INDEX IF NOT EXISTS idx_submissions_student ON submissions(student_id)');
+                    await run('CREATE INDEX IF NOT EXISTS idx_submissions_subject ON submissions(subject)');
+                    await run('CREATE INDEX IF NOT EXISTS idx_submissions_started_at ON submissions(exam_started_at)');
+
+                    console.log('✅ Migration 1 completed successfully!');
+                }
+            }
+            // Add more migrations here in the future:
+            // {
+            //     version: 2,
+            //     name: 'Add new feature',
+            //     migrate: async () => { ... }
+            // }
+        ];
+
+        // Run pending migrations
+        for (const migration of migrations) {
+            if (migration.version > dbVersion) {
+                console.log(`\n🚀 Applying migration ${migration.version}: ${migration.name}`);
+
+                try {
+                    await migration.migrate();
+
+                    // Record migration
+                    await run(
+                        'INSERT INTO migrations (version, name) VALUES (?, ?)',
+                        [migration.version, migration.name]
+                    );
+
+                    console.log(`✅ Migration ${migration.version} applied successfully!\n`);
+                } catch (err) {
+                    console.error(`❌ Migration ${migration.version} failed:`, err);
+                    throw err;
+                }
+            }
+        }
+
+        const finalVersion = await get('SELECT MAX(version) as version FROM migrations');
+        console.log(`✅ Database is up to date (version ${finalVersion?.version || 0})`);
+
+    } catch (error) {
+        console.error('❌ Migration check failed:', error);
+        throw error;
+    }
+}
+
+/**
  * Initialize database - Create all tables
  */
 async function initDatabase() {
     try {
         console.log('🔧 Initializing database tables...');
+
+        // Run migrations first
+        await checkAndRunMigrations();
 
         // Create students table
         await run(`
@@ -131,47 +291,49 @@ async function initDatabase() {
         // Create exams table
         await run(`
             CREATE TABLE IF NOT EXISTS exams (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                subject TEXT NOT NULL,
-                class TEXT NOT NULL,
-                is_active INTEGER DEFAULT 0,
-                duration_minutes INTEGER DEFAULT 60,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(subject, class)
-            )
+                                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                                 subject TEXT NOT NULL,
+                                                 class TEXT NOT NULL,
+                                                 is_active INTEGER DEFAULT 0,
+                                                 duration_minutes INTEGER DEFAULT 60,
+                                                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                                 UNIQUE(subject, class)
+                )
         `);
         console.log('✅ Exams table ready');
 
         // Create questions table
         await run(`
             CREATE TABLE IF NOT EXISTS questions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                exam_id INTEGER NOT NULL,
-                question_text TEXT NOT NULL,
-                option_a TEXT NOT NULL,
-                option_b TEXT NOT NULL,
-                option_c TEXT NOT NULL,
-                option_d TEXT NOT NULL,
-                correct_answer TEXT NOT NULL CHECK(correct_answer IN ('A', 'B', 'C', 'D')),
+                                                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                                     exam_id INTEGER NOT NULL,
+                                                     question_text TEXT NOT NULL,
+                                                     option_a TEXT NOT NULL,
+                                                     option_b TEXT NOT NULL,
+                                                     option_c TEXT NOT NULL,
+                                                     option_d TEXT NOT NULL,
+                                                     correct_answer TEXT NOT NULL CHECK(correct_answer IN ('A', 'B', 'C', 'D')),
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(exam_id) REFERENCES exams(id) ON DELETE CASCADE
-            )
+                )
         `);
         console.log('✅ Questions table ready');
 
-        // Create submissions table
+        // Create submissions table with correct schema
         await run(`
             CREATE TABLE IF NOT EXISTS submissions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                student_id INTEGER NOT NULL,
-                subject TEXT NOT NULL,
-                answers TEXT NOT NULL,
-                score INTEGER NOT NULL,
-                total_questions INTEGER NOT NULL,
-                submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE,
-                UNIQUE(student_id, subject)
-            )
+                                                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                                       student_id INTEGER NOT NULL,
+                                                       subject TEXT NOT NULL,
+                                                       exam_started_at DATETIME,
+                                                       duration_minutes INTEGER,
+                                                       answers TEXT,
+                                                       score INTEGER,
+                                                       total_questions INTEGER,
+                                                       submitted_at DATETIME,
+                                                       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                                                       FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
+                )
         `);
         console.log('✅ Submissions table ready');
 
@@ -194,7 +356,7 @@ async function initDatabase() {
         // Create settings table
         await run(`
             CREATE TABLE IF NOT EXISTS settings (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
+                                                    id INTEGER PRIMARY KEY CHECK (id = 1),
                 system_name TEXT DEFAULT 'Molek CBT System',
                 school_name TEXT DEFAULT 'Molek School',
                 academic_session TEXT DEFAULT '2024/2025',
@@ -205,7 +367,7 @@ async function initDatabase() {
                 show_results INTEGER DEFAULT 1,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
+                )
         `);
         console.log('✅ Settings table ready');
 
@@ -235,6 +397,8 @@ async function initDatabase() {
         await run('CREATE INDEX IF NOT EXISTS idx_students_exam_code ON students(exam_code)');
         await run('CREATE INDEX IF NOT EXISTS idx_exams_class ON exams(class)');
         await run('CREATE INDEX IF NOT EXISTS idx_submissions_student ON submissions(student_id)');
+        await run('CREATE INDEX IF NOT EXISTS idx_submissions_subject ON submissions(subject)');
+        await run('CREATE INDEX IF NOT EXISTS idx_submissions_started_at ON submissions(exam_started_at)');
         await run('CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC)');
         console.log('✅ Indexes ready');
 
