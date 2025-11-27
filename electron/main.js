@@ -1,10 +1,21 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const https = require('https');
 const isDev = process.env.NODE_ENV === 'development';
 
 let mainWindow;
 let backendServer;
+
+// ✅ AUTO-UPDATE CONFIGURATION
+const UPDATE_CONFIG = {
+    enabled: !isDev, // Only check in production
+    githubOwner: 'moh-Adedamola',
+    githubRepo: 'molek-monolithic-cbt-system',
+    checkOnStartup: true,
+    checkInterval: 24 * 60 * 60 * 1000, // Check daily
+    currentVersion: app.getVersion()
+};
 
 // Paths configuration
 const paths = {
@@ -14,7 +25,7 @@ const paths = {
     database: null,
     backend: null,
     uploads: null,
-    logs: null  // ✅ ADD LOGS PATH
+    logs: null
 };
 
 /**
@@ -27,14 +38,14 @@ function initializePaths() {
         paths.database = path.join(paths.backend, 'src/db');
         paths.archives = path.join(paths.backend, 'archives');
         paths.uploads = path.join(paths.backend, 'uploads');
-        paths.logs = path.join(paths.backend, 'logs');  // ✅ ADD THIS
+        paths.logs = path.join(paths.backend, 'logs');
     } else {
         // Production paths
         paths.backend = path.join(process.resourcesPath, 'backend');
         paths.database = path.join(paths.userData, 'data');
         paths.archives = path.join(paths.documents, 'MolekCBT_Archives');
         paths.uploads = path.join(paths.documents, 'MolekCBT_Uploads');
-        paths.logs = path.join(paths.documents, 'MolekCBT_Logs');  // ✅ ADD THIS
+        paths.logs = path.join(paths.documents, 'MolekCBT_Logs');
     }
 
     // Create necessary directories
@@ -51,7 +62,7 @@ function initializePaths() {
             fs.mkdirSync(paths.uploads, { recursive: true });
             console.log('✅ Created uploads directory');
         }
-        if (!fs.existsSync(paths.logs)) {  // ✅ ADD THIS
+        if (!fs.existsSync(paths.logs)) {
             fs.mkdirSync(paths.logs, { recursive: true });
             console.log('✅ Created logs directory');
         }
@@ -64,12 +75,199 @@ function initializePaths() {
         console.log('Database:', paths.database);
         console.log('Archives:', paths.archives);
         console.log('Uploads:', paths.uploads);
-        console.log('Logs:', paths.logs);  // ✅ ADD THIS
+        console.log('Logs:', paths.logs);
         console.log('========================================');
     } catch (error) {
         console.error('❌ Failed to create directories:', error);
     }
 }
+
+// ================================================================
+// ✅ AUTO-UPDATE FUNCTIONS
+// ================================================================
+
+/**
+ * Check for updates from GitHub Releases
+ */
+async function checkForUpdates() {
+    if (!UPDATE_CONFIG.enabled) {
+        console.log('ℹ️  Update check disabled in development mode');
+        return null;
+    }
+
+    try {
+        console.log('🔍 Checking for updates...');
+        console.log('   Current version:', UPDATE_CONFIG.currentVersion);
+        console.log('   GitHub:', `${UPDATE_CONFIG.githubOwner}/${UPDATE_CONFIG.githubRepo}`);
+
+        const updateInfo = await fetchLatestRelease();
+
+        if (!updateInfo) {
+            console.log('ℹ️  No releases found on GitHub');
+            return null;
+        }
+
+        const latestVersion = updateInfo.tag_name.replace(/^v/, ''); // Remove 'v' prefix
+        const currentVersion = UPDATE_CONFIG.currentVersion;
+
+        console.log('   Latest version:', latestVersion);
+
+        if (compareVersions(latestVersion, currentVersion) > 0) {
+            console.log('✅ Update available!');
+            return {
+                available: true,
+                currentVersion,
+                latestVersion,
+                releaseNotes: updateInfo.body || 'No release notes available',
+                downloadUrl: updateInfo.html_url, // Link to GitHub release page
+                publishedAt: updateInfo.published_at
+            };
+        } else {
+            console.log('✅ App is up to date');
+            return {
+                available: false,
+                currentVersion,
+                latestVersion
+            };
+        }
+    } catch (error) {
+        console.error('❌ Update check failed:', error.message);
+        return null;
+    }
+}
+
+/**
+ * Fetch latest release from GitHub API
+ */
+function fetchLatestRelease() {
+    return new Promise((resolve, reject) => {
+        const options = {
+            hostname: 'api.github.com',
+            path: `/repos/${UPDATE_CONFIG.githubOwner}/${UPDATE_CONFIG.githubRepo}/releases/latest`,
+            method: 'GET',
+            headers: {
+                'User-Agent': 'Molek-CBT-Updater',
+                'Accept': 'application/vnd.github.v3+json'
+            }
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+
+            res.on('data', (chunk) => {
+                data += chunk;
+            });
+
+            res.on('end', () => {
+                if (res.statusCode === 200) {
+                    try {
+                        resolve(JSON.parse(data));
+                    } catch (e) {
+                        reject(new Error('Failed to parse GitHub response'));
+                    }
+                } else if (res.statusCode === 404) {
+                    // No releases yet
+                    resolve(null);
+                } else {
+                    reject(new Error(`GitHub API returned ${res.statusCode}`));
+                }
+            });
+        });
+
+        req.on('error', (error) => {
+            reject(error);
+        });
+
+        req.setTimeout(10000, () => {
+            req.destroy();
+            reject(new Error('Request timeout'));
+        });
+
+        req.end();
+    });
+}
+
+/**
+ * Compare version strings (semver-like)
+ * Returns: 1 if v1 > v2, -1 if v1 < v2, 0 if equal
+ */
+function compareVersions(v1, v2) {
+    const parts1 = v1.split('.').map(Number);
+    const parts2 = v2.split('.').map(Number);
+
+    for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
+        const part1 = parts1[i] || 0;
+        const part2 = parts2[i] || 0;
+
+        if (part1 > part2) return 1;
+        if (part1 < part2) return -1;
+    }
+
+    return 0;
+}
+
+/**
+ * Show update notification dialog
+ */
+function showUpdateNotification(updateInfo) {
+    const response = dialog.showMessageBoxSync(mainWindow, {
+        type: 'info',
+        title: 'Update Available',
+        message: `A new version of Molek CBT System is available!`,
+        detail: `Current version: ${updateInfo.currentVersion}\n` +
+            `Latest version: ${updateInfo.latestVersion}\n\n` +
+            `Release notes:\n${updateInfo.releaseNotes.substring(0, 200)}...\n\n` +
+            `Would you like to download it now?`,
+        buttons: ['Download Now', 'Remind Me Later', 'Skip This Version'],
+        defaultId: 0,
+        cancelId: 1
+    });
+
+    if (response === 0) {
+        // Download Now - Open browser to GitHub release
+        console.log('🌐 Opening download page...');
+        shell.openExternal(updateInfo.downloadUrl);
+    } else if (response === 2) {
+        // Skip This Version
+        console.log('⏭️  User skipped version', updateInfo.latestVersion);
+        saveSkippedVersion(updateInfo.latestVersion);
+    } else {
+        // Remind Me Later
+        console.log('⏰ User will be reminded later');
+    }
+}
+
+/**
+ * Save skipped version to avoid showing notification again
+ */
+function saveSkippedVersion(version) {
+    try {
+        const skipFilePath = path.join(paths.userData, '.skipped-version');
+        fs.writeFileSync(skipFilePath, version);
+    } catch (error) {
+        console.error('Failed to save skipped version:', error);
+    }
+}
+
+/**
+ * Check if version was skipped
+ */
+function isVersionSkipped(version) {
+    try {
+        const skipFilePath = path.join(paths.userData, '.skipped-version');
+        if (fs.existsSync(skipFilePath)) {
+            const skippedVersion = fs.readFileSync(skipFilePath, 'utf8').trim();
+            return skippedVersion === version;
+        }
+    } catch (error) {
+        console.error('Failed to check skipped version:', error);
+    }
+    return false;
+}
+
+// ================================================================
+// EXISTING FUNCTIONS (Keep as is)
+// ================================================================
 
 /**
  * First-time setup
@@ -149,7 +347,7 @@ async function startBackend() {
     console.log('Database path:', dbPath);
     console.log('Archives path:', paths.archives);
     console.log('Uploads path:', paths.uploads);
-    console.log('Logs path:', paths.logs);  // ✅ ADD THIS
+    console.log('Logs path:', paths.logs);
     console.log('Environment:', isDev ? 'development' : 'production');
 
     const serverPath = path.join(paths.backend, 'src/server.js');
@@ -185,12 +383,12 @@ async function startBackend() {
             env: {
                 ...process.env,
                 PORT: '5000',
-                DB_PATH: dbPath,  // Full path to .db file
+                DB_PATH: dbPath,
                 ARCHIVES_PATH: paths.archives,
                 UPLOADS_PATH: paths.uploads,
-                LOGS_PATH: paths.logs,  // ✅ ADD THIS
+                LOGS_PATH: paths.logs,
                 NODE_ENV: isDev ? 'development' : 'production',
-                DEBUG: 'true'  // Enable debug mode
+                DEBUG: 'true'
             },
             stdio: ['ignore', 'pipe', 'pipe']
         });
@@ -228,60 +426,53 @@ async function startBackend() {
                 );
             } else {
                 dialog.showErrorBox(
-                    'Backend Start Failed',
-                    'Failed to start the backend server:\n\n' + error.message
+                    'Backend Error',
+                    'Failed to start backend server.\n\n' +
+                    'Error: ' + error.message + '\n\n' +
+                    'Please check the logs or contact support.'
                 );
             }
         });
 
-        backendServer.on('close', (code) => {
-            console.log('========================================');
-            console.log(`[Backend] Process exited with code ${code}`);
-            console.log('========================================');
+        backendServer.on('exit', (code, signal) => {
+            console.error('========================================');
+            console.error('⚠️  BACKEND PROCESS EXITED');
+            console.error('========================================');
+            console.error('Exit code:', code);
+            console.error('Signal:', signal);
 
             if (code !== 0 && code !== null) {
-                dialog.showMessageBox({
-                    type: 'error',
-                    title: 'Backend Stopped',
-                    message: 'The backend server stopped unexpectedly.',
-                    detail: `Exit code: ${code}\n\nThe application may not function correctly.`
-                });
+                console.error('❌ Backend exited with error');
+
+                if (!isDev) {
+                    dialog.showErrorBox(
+                        'Backend Crashed',
+                        'The backend server has stopped unexpectedly.\n\n' +
+                        'Exit code: ' + code + '\n\n' +
+                        'Please restart the application.\n' +
+                        'If the problem persists, contact support.'
+                    );
+                }
             }
         });
 
-        console.log('✅ Backend process spawned successfully!');
-        console.log('   Process PID:', backendServer.pid);
-        console.log('========================================');
+        console.log('✅ Backend process spawned (PID:', backendServer.pid, ')');
         return true;
-
     } catch (error) {
-        console.error('========================================');
-        console.error('❌ FAILED TO START BACKEND');
-        console.error('========================================');
-        console.error('Error:', error);
-        console.error('Message:', error.message);
-        console.error('Stack:', error.stack);
-
-        dialog.showErrorBox(
-            'Backend Start Failed',
-            'Failed to start the backend server:\n\n' +
-            error.message + '\n\n' +
-            'Please ensure Node.js is installed correctly.'
-        );
-
+        console.error('❌ Failed to start backend:', error);
         return false;
     }
 }
 
 /**
- * Create main application window
+ * Create main window
  */
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1400,
         height: 900,
-        minWidth: 1024,
-        minHeight: 768,
+        minWidth: 1000,
+        minHeight: 700,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -291,7 +482,7 @@ function createWindow() {
         title: 'Molek CBT System - Admin Panel',
         backgroundColor: '#ffffff',
         show: false,
-        autoHideMenuBar: true  // Always hide menu bar
+        autoHideMenuBar: true
     });
 
     // Always remove application menu
@@ -315,7 +506,22 @@ function createWindow() {
         mainWindow.show();
         console.log('✅ Main window shown');
 
-        // Open dev tools only in development (optional in production)
+        // ✅ Check for updates after window is shown
+        if (UPDATE_CONFIG.checkOnStartup) {
+            setTimeout(async () => {
+                const updateInfo = await checkForUpdates();
+                if (updateInfo && updateInfo.available) {
+                    // Check if user previously skipped this version
+                    if (!isVersionSkipped(updateInfo.latestVersion)) {
+                        showUpdateNotification(updateInfo);
+                    } else {
+                        console.log('ℹ️  User previously skipped version', updateInfo.latestVersion);
+                    }
+                }
+            }, 5000); // Check 5 seconds after window opens
+        }
+
+        // Open dev tools only in development
         if (isDev) {
             console.log('🔧 Opening Developer Tools...');
             mainWindow.webContents.openDevTools();
@@ -366,12 +572,22 @@ ipcMain.handle('get-archives-path', () => {
     return paths.archives;
 });
 
-ipcMain.handle('get-logs-path', () => {  // ✅ ADD THIS
+ipcMain.handle('get-logs-path', () => {
     return paths.logs;
 });
 
 ipcMain.handle('get-app-version', () => {
     return app.getVersion();
+});
+
+// ✅ NEW: Manual update check from frontend
+ipcMain.handle('check-for-updates', async () => {
+    return await checkForUpdates();
+});
+
+// ✅ NEW: Open download page
+ipcMain.handle('open-download-page', (event, url) => {
+    shell.openExternal(url);
 });
 
 ipcMain.handle('get-network-info', () => {
@@ -397,7 +613,7 @@ ipcMain.handle('open-archives-folder', () => {
     shell.openPath(paths.archives);
 });
 
-ipcMain.handle('open-logs-folder', () => {  // ✅ ADD THIS
+ipcMain.handle('open-logs-folder', () => {
     shell.openPath(paths.logs);
 });
 
@@ -413,6 +629,7 @@ app.on('ready', async () => {
     console.log('Node Version:', process.version);
     console.log('Electron Version:', process.versions.electron);
     console.log('Chrome Version:', process.versions.chrome);
+    console.log('Update Check:', UPDATE_CONFIG.enabled ? 'Enabled' : 'Disabled');
     console.log('========================================');
 
     initializePaths();
