@@ -14,31 +14,52 @@ class ArchiveService {
 
     /**
      * Get archive directory - works in both dev and production
+     * Uses ARCHIVES_PATH environment variable if available
      */
     getArchiveDirectory() {
-        // Try to detect if running in Electron (packaged app)
+        // Check if ARCHIVES_PATH is set (like your production build does)
+        if (process.env.ARCHIVES_PATH) {
+            console.log('Using ARCHIVES_PATH from environment:', process.env.ARCHIVES_PATH);
+            return process.env.ARCHIVES_PATH;
+        }
+
+        // Fallback: Try to detect if running in Electron (packaged app)
         if (process.versions.electron) {
-            // Running in Electron - use app data directory
-            const appName = 'molek-cbt';
+            // Running in Electron - use Documents directory (user-writable)
+            const appName = 'MolekCBT_Archives';
             const platform = process.platform;
 
             if (platform === 'win32') {
-                return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), appName, 'archives');
+                // Windows: Use Documents folder (always writable)
+                const documentsPath = path.join(os.homedir(), 'Documents');
+                return path.join(documentsPath, appName);
             } else if (platform === 'darwin') {
-                return path.join(os.homedir(), 'Library', 'Application Support', appName, 'archives');
+                return path.join(os.homedir(), 'Documents', appName);
             } else {
-                return path.join(os.homedir(), '.config', appName, 'archives');
+                return path.join(os.homedir(), 'Documents', appName);
             }
         } else {
             // Running in dev mode - use project directory
-            return path.join(__dirname, '../../../archives');
+            // Go up from backend/src/services to project root, then archives/
+            return path.join(process.cwd(), 'archives');
         }
     }
 
     ensureArchiveDirectory() {
-        if (!fs.existsSync(this.archiveDir)) {
-            fs.mkdirSync(this.archiveDir, { recursive: true });
-            console.log('✅ Created archive directory');
+        try {
+            if (!fs.existsSync(this.archiveDir)) {
+                fs.mkdirSync(this.archiveDir, { recursive: true });
+                console.log('✅ Created archive directory');
+            }
+        } catch (error) {
+            console.error('❌ Failed to create archive directory:', error.message);
+            // Try fallback to user home directory
+            const fallbackPath = path.join(os.homedir(), 'MolekCBT_Archives');
+            console.log('📁 Using fallback archive directory:', fallbackPath);
+            this.archiveDir = fallbackPath;
+            if (!fs.existsSync(this.archiveDir)) {
+                fs.mkdirSync(this.archiveDir, { recursive: true });
+            }
         }
     }
 
