@@ -1,7 +1,6 @@
 import { NavLink } from "react-router-dom";
 import {
     LayoutDashboard,
-    Users,
     GraduationCap,
     BookOpen,
     FileQuestion,
@@ -11,17 +10,17 @@ import {
     TrendingUp,
     Settings,
     Shield,
-    Menu,
     Archive,
-    X, Network,
+    Network,
+    X,
 } from "lucide-react";
 import clsx from "clsx";
 
 const Sidebar = ({ isOpen, setIsOpen }) => {
     const navigationItems = [
         { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, path: "/admin" },
-        { id: "Archive", label: "Archive Management", icon: Archive, path: "/admin/archive" },
-        { id: "Network", label: "Network Setup", icon: Network, path: "/admin/network" },
+        { id: "archive", label: "Archive Management", icon: Archive, path: "/admin/archive" },
+        { id: "network", label: "Network Setup", icon: Network, path: "/admin/network" },
         { id: "students", label: "Student Management", icon: GraduationCap, path: "/admin/students" },
         { id: "subjects", label: "Subject Management", icon: BookOpen, path: "/admin/subjects" },
         { id: "questions", label: "Question Bank", icon: FileQuestion, path: "/admin/questions" },
@@ -35,39 +34,42 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
 
     return (
         <>
-            {/* Overlay for mobile when sidebar is open */}
+            {/* Blur backdrop for mobile when sidebar is open */}
             {isOpen && (
                 <div
-                    className="fixed inset-0 z-20 bg-black bg-opacity-50 lg:hidden"
+                    className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm lg:hidden"
                     onClick={() => setIsOpen(false)}
+                    aria-hidden="true"
                 />
             )}
 
+            {/* Sidebar */}
             <aside
                 className={clsx(
-                    "fixed inset-y-0 left-0 z-30 w-64 bg-white shadow-lg transition-transform duration-300 lg:static lg:translate-x-0",
+                    // Base styles
+                    "fixed inset-y-0 left-0 z-50 w-72 bg-white shadow-lg transition-transform duration-300 ease-in-out",
+                    // Desktop: Always visible, no transform
+                    "lg:static lg:z-auto lg:translate-x-0",
+                    // Mobile: Slide in/out based on isOpen
                     isOpen ? "translate-x-0" : "-translate-x-full"
                 )}
             >
                 {/* Header */}
                 <div className="flex items-center justify-between border-b px-6 py-4">
-                    <div className="flex items-center gap-2">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-white">
-                            <span className="font-bold">M</span>
-                        </div>
-                        <span className="text-lg font-bold">Molek CBT</span>
+                    <div className="flex items-center gap-3">
+                        {/*<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-blue-700 text-white shadow-md">*/}
+                        {/*    <span className="text-lg font-bold">M</span>*/}
+                        {/*</div>*/}
+                        <span className="text-xl font-bold text-gray-800">Molek CBT</span>
                     </div>
-                    {/* Toggle button for both mobile and desktop */}
+
+                    {/* Close button - Only visible on mobile */}
                     <button
-                        onClick={() => setIsOpen(!isOpen)}
-                        className="rounded-lg p-2 hover:bg-gray-100 transition-colors"
+                        onClick={() => setIsOpen(false)}
+                        className="rounded-lg p-2 hover:bg-gray-100 transition-colors lg:hidden"
+                        aria-label="Close menu"
                     >
-                        {isOpen ? (
-                            <X className="h-5 w-5 text-gray-600 lg:hidden" />
-                        ) : (
-                            <Menu className="h-5 w-5 text-gray-600" />
-                        )}
-                        <Menu className="h-5 w-5 text-gray-600 hidden lg:block" />
+                        <X className="h-5 w-5 text-gray-600" />
                     </button>
                 </div>
 
@@ -80,28 +82,42 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
                                 <NavLink
                                     key={item.id}
                                     to={item.path}
+                                    end={item.path === "/admin"}
                                     onClick={() => {
-                                        // Only close on mobile
+                                        // Close sidebar on mobile after clicking
                                         if (window.innerWidth < 1024) {
                                             setIsOpen(false);
                                         }
                                     }}
                                     className={({ isActive }) =>
                                         clsx(
-                                            "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                                            "flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-medium transition-all duration-150",
                                             isActive
-                                                ? "bg-blue-50 text-blue-700"
-                                                : "text-gray-700 hover:bg-gray-100"
+                                                ? "bg-gradient-to-r from-blue-50 to-blue-100 text-blue-700 shadow-sm"
+                                                : "text-gray-700 hover:bg-gray-50 hover:text-gray-900"
                                         )
                                     }
                                 >
-                                    <Icon className="h-5 w-5" />
+                                    <Icon className="h-5 w-5 flex-shrink-0" />
                                     <span>{item.label}</span>
                                 </NavLink>
                             );
                         })}
                     </div>
                 </nav>
+
+                {/* Footer - Optional */}
+                <div className="border-t px-6 py-4">
+                    <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100">
+                            <span className="text-xs font-semibold text-gray-600">A</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-900 truncate">Admin</p>
+                            <p className="text-xs text-gray-500 truncate">admin@molek.com</p>
+                        </div>
+                    </div>
+                </div>
             </aside>
         </>
     );
