@@ -160,7 +160,7 @@ const ExamManagement = () => {
             ),
         },
         {
-            key: 'total_questions',
+            key: 'question_count',  // ✅ FIXED: Changed from total_questions to question_count
             label: 'Questions',
             render: (value) => (
                 <span className="text-gray-600">{value || 0}</span>
@@ -314,7 +314,7 @@ const ExamManagement = () => {
                             </div>
                             <div>
                                 <p className="text-sm text-gray-600">Total Questions</p>
-                                <p className="font-medium">{examDetails.exam.total_questions}</p>
+                                <p className="font-medium">{examDetails.questions.length}</p>
                             </div>
                             <div>
                                 <p className="text-sm text-gray-600">Status</p>
@@ -355,7 +355,7 @@ const ExamManagement = () => {
                 onClose={() => setIsDeleteDialogOpen(false)}
                 onConfirm={handleDeleteConfirm}
                 title="Delete Exam"
-                message={`Are you sure you want to delete the exam for ${selectedExam?.subject} - ${selectedExam?.class}? This will also delete all ${selectedExam?.total_questions} questions and cannot be undone.`}
+                message={`Are you sure you want to delete the exam for ${selectedExam?.subject} - ${selectedExam?.class}? This will also delete all ${selectedExam?.question_count || 0} questions and cannot be undone.`}
                 confirmText="Delete"
                 type="danger"
                 loading={submitting}

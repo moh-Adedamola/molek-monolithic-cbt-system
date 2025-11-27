@@ -427,30 +427,80 @@ async function getAllQuestions(req, res) {
 
 async function activateExam(req, res) {
     try {
-        const { examId, is_active } = req.body;
+        console.log('📤 Activate Exam Request:', req.body);
 
-        if (examId === undefined || is_active === undefined) {
-            return res.status(400).json({ error: 'examId and is_active required' });
+        const { subject, class: classLevel, is_active } = req.body;
+
+        // ✅ Validate input
+        if (!subject || !classLevel || is_active === undefined) {
+            console.error('❌ Missing required fields:', { subject, class: classLevel, is_active });
+            return res.status(400).json({
+                error: 'subject, class, and is_active are required',
+                received: { subject, class: classLevel, is_active }
+            });
         }
 
-        await run('UPDATE exams SET is_active = ? WHERE id = ?', [is_active ? 1 : 0, examId]);
+        // ✅ Find exam by subject and class
+        const exam = await get(
+            'SELECT id, subject, class FROM exams WHERE subject = ? AND class = ?',
+            [subject, classLevel]
+        );
 
-        const exam = await get('SELECT subject, class FROM exams WHERE id = ?', [examId]);
+        if (!exam) {
+            console.error('❌ Exam not found:', { subject, class: classLevel });
+            return res.status(404).json({
+                error: `Exam not found for ${subject} - ${classLevel}`
+            });
+        }
 
-        logAudit({
+        console.log(`🔄 Updating exam ${exam.id}: ${subject} - ${classLevel} → ${is_active ? 'Active' : 'Inactive'}`);
+
+        // ✅ Update exam status
+        await run(
+            'UPDATE exams SET is_active = ? WHERE id = ?',
+            [is_active ? 1 : 0, exam.id]
+        );
+
+        // ✅ Audit log
+        await logAudit({
             action: is_active ? ACTIONS.EXAM_ACTIVATED : ACTIONS.EXAM_DEACTIVATED,
             userType: 'admin',
             userIdentifier: 'admin',
             details: `${is_active ? 'Activated' : 'Deactivated'} exam: ${exam.subject} (${exam.class})`,
             ipAddress: getClientIp(req),
             status: 'success',
-            metadata: { examId, subject: exam.subject, class: exam.class }
+            metadata: { examId: exam.id, subject: exam.subject, class: exam.class, is_active }
         });
 
-        res.json({ message: `Exam ${is_active ? 'activated' : 'deactivated'}` });
+        console.log(`✅ Exam ${is_active ? 'activated' : 'deactivated'} successfully`);
+
+        res.json({
+            success: true,
+            message: `Exam ${is_active ? 'activated' : 'deactivated'} successfully`,
+            exam: {
+                id: exam.id,
+                subject: exam.subject,
+                class: exam.class,
+                is_active: is_active ? 1 : 0
+            }
+        });
     } catch (error) {
-        console.error('Activate exam error:', error);
-        res.status(500).json({ error: 'Failed to activate/deactivate exam' });
+        console.error('❌ Activate exam error:', error);
+
+        await logAudit({
+            action: 'EXAM_ACTIVATION_FAILED',
+            userType: 'admin',
+            userIdentifier: 'admin',
+            details: `Failed to activate/deactivate exam: ${error.message}`,
+            ipAddress: getClientIp(req),
+            status: 'failure',
+            metadata: { error: error.message, body: req.body }
+        });
+
+        res.status(500).json({
+            error: 'Failed to activate/deactivate exam',
+            details: error.message
+        });
     }
 }
 
