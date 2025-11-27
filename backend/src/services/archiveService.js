@@ -1,17 +1,38 @@
-// backend/src/services/archiveService.js
-const { getDb } = require('../utils/db');
+const { getDb, getDatabasePath } = require('../utils/db');
 const { getSettings } = require('./settingsService');
 const fs = require('fs-extra');
 const path = require('path');
-const { app } = require('electron');
+const os = require('os');
 
 class ArchiveService {
     constructor() {
-        // Use app.getPath('userData') for consistent location
-        const userDataPath = app ? app.getPath('userData') : path.join(__dirname, '../../');
-        this.archiveDir = path.join(userDataPath, 'archives');
+        // Determine archive directory based on environment
+        this.archiveDir = this.getArchiveDirectory();
         this.ensureArchiveDirectory();
         console.log('📁 Archive directory:', this.archiveDir);
+    }
+
+    /**
+     * Get archive directory - works in both dev and production
+     */
+    getArchiveDirectory() {
+        // Try to detect if running in Electron (packaged app)
+        if (process.versions.electron) {
+            // Running in Electron - use app data directory
+            const appName = 'molek-cbt';
+            const platform = process.platform;
+
+            if (platform === 'win32') {
+                return path.join(process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'), appName, 'archives');
+            } else if (platform === 'darwin') {
+                return path.join(os.homedir(), 'Library', 'Application Support', appName, 'archives');
+            } else {
+                return path.join(os.homedir(), '.config', appName, 'archives');
+            }
+        } else {
+            // Running in dev mode - use project directory
+            return path.join(__dirname, '../../../archives');
+        }
     }
 
     ensureArchiveDirectory() {
@@ -21,11 +42,8 @@ class ArchiveService {
         }
     }
 
-    getDatabasePath() {
-        if (app) {
-            return path.join(app.getPath('userData'), 'data', 'cbt.db');
-        }
-        return path.join(__dirname, '../db/cbt.db');
+    getArchivePath() {
+        return this.archiveDir;
     }
 
     /**
@@ -33,8 +51,8 @@ class ArchiveService {
      */
     async archiveTerm(termName) {
         try {
-            const db = getDb();
-            const settings = getSettings();
+            const db = await getDb();
+            const settings = await getSettings();
             const timestamp = Date.now();
 
             // Create archive name: Session_Term_Timestamp
@@ -48,30 +66,32 @@ class ArchiveService {
 
             await fs.ensureDir(archivePath);
 
-            // 1. Export all data to JSON
-            const data = this.exportAllData(db);
+            // Export all data from database
+            const data = await this.exportAllData(db);
+
+            // Save data.json
             await fs.writeJSON(
                 path.join(archivePath, 'data.json'),
-                { ...data, settings, archivedAt: new Date().toISOString() },
+                data,
                 { spaces: 2 }
             );
 
-            // 2. Copy database file
-            const dbPath = this.getDatabasePath();
+            // Copy database file
+            const dbPath = getDatabasePath();
             if (fs.existsSync(dbPath)) {
                 await fs.copy(dbPath, path.join(archivePath, 'cbt.db'));
             }
 
-            // 3. Export students CSV
+            // Export students CSV
             await this.exportStudentsCSV(data.students, path.join(archivePath, 'students.csv'));
 
-            // 4. Export results CSV
+            // Export results CSV
             await this.exportResultsCSV(data.submissions, path.join(archivePath, 'results.csv'));
 
-            // 5. Create summary file
+            // Create summary text file
             await this.createSummary(data, settings, termName, path.join(archivePath, 'SUMMARY.txt'));
 
-            console.log(`✅ Archive created: ${archivePath}`);
+            console.log(`✅ Archive created: ${archiveName}`);
 
             return {
                 success: true,
@@ -93,44 +113,81 @@ class ArchiveService {
     /**
      * Export all data from database
      */
-    exportAllData(db) {
-        const students = db.prepare('SELECT * FROM students ORDER BY class, last_name').all();
-        const exams = db.prepare('SELECT * FROM exams ORDER BY class, subject').all();
-        const questions = db.prepare('SELECT * FROM questions ORDER BY exam_id').all();
-        const submissions = db.prepare(`
-            SELECT s.*, st.first_name, st.last_name, st.class, st.exam_code
-            FROM submissions s
-                     JOIN students st ON s.student_id = st.id
-            ORDER BY st.class, st.last_name, s.submitted_at
-        `).all();
+    async exportAllData(db) {
+        const { all } = require('../utils/db');
 
-        return { students, exams, questions, submissions };
+        const data = {
+            students: await all('SELECT * FROM students ORDER BY class, last_name'),
+            exams: await all('SELECT * FROM exams ORDER BY class, subject'),
+            questions: await all('SELECT * FROM questions ORDER BY exam_id, id'),
+            submissions: await all('SELECT * FROM submissions ORDER BY submitted_at DESC'),
+            auditLogs: await all('SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 1000')
+        };
+
+        return data;
     }
 
     /**
      * Export students to CSV
      */
     async exportStudentsCSV(students, filepath) {
-        const headers = 'First Name,Middle Name,Last Name,Class,Student ID,Exam Code,Created At\n';
-        const rows = students.map(s =>
-            `${s.first_name || ''},${s.middle_name || ''},${s.last_name || ''},${s.class || ''},${s.student_id || ''},${s.exam_code || ''},${s.created_at || ''}`
-        ).join('\n');
+        const headers = ['First Name', 'Middle Name', 'Last Name', 'Class', 'Student ID', 'Exam Code', 'Created At'];
+        const rows = students.map(s => [
+            s.first_name,
+            s.middle_name || '',
+            s.last_name,
+            s.class,
+            s.student_id || '',
+            s.exam_code,
+            s.created_at
+        ]);
 
-        await fs.writeFile(filepath, headers + rows);
+        const csv = [
+            headers.join(','),
+            ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+        ].join('\n');
+
+        await fs.writeFile(filepath, csv, 'utf8');
     }
 
     /**
      * Export results to CSV
      */
     async exportResultsCSV(submissions, filepath) {
-        const headers = 'Student Name,Class,Exam Code,Subject,Score,Total,Percentage,Submitted At\n';
-        const rows = submissions.map(s => {
-            const name = `${s.first_name} ${s.last_name}`;
-            const percentage = s.total_questions > 0 ? Math.round((s.score / s.total_questions) * 100) : 0;
-            return `${name},${s.class},${s.exam_code},${s.subject},${s.score},${s.total_questions},${percentage}%,${s.submitted_at}`;
-        }).join('\n');
+        const { all } = require('../utils/db');
 
-        await fs.writeFile(filepath, headers + rows);
+        const headers = ['Student Name', 'Class', 'Exam Code', 'Subject', 'Score', 'Total', 'Percentage', 'Submitted At'];
+
+        const rows = [];
+        for (const sub of submissions) {
+            const student = await require('../utils/db').get(
+                'SELECT first_name, middle_name, last_name, class, exam_code FROM students WHERE id = ?',
+                [sub.student_id]
+            );
+
+            if (student) {
+                const fullName = `${student.first_name} ${student.middle_name || ''} ${student.last_name}`.trim();
+                const percentage = ((sub.score / sub.total_questions) * 100).toFixed(2);
+
+                rows.push([
+                    fullName,
+                    student.class,
+                    student.exam_code,
+                    sub.subject,
+                    sub.score,
+                    sub.total_questions,
+                    `${percentage}%`,
+                    sub.submitted_at
+                ]);
+            }
+        }
+
+        const csv = [
+            headers.join(','),
+            ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+        ].join('\n');
+
+        await fs.writeFile(filepath, csv, 'utf8');
     }
 
     /**
@@ -138,74 +195,79 @@ class ArchiveService {
      */
     async createSummary(data, settings, termName, filepath) {
         const summary = `
-════════════════════════════════════════════════════════════════
-                    MOLEK CBT SYSTEM - ARCHIVE SUMMARY
-════════════════════════════════════════════════════════════════
+╔════════════════════════════════════════════════════════════════╗
+║                    ARCHIVE SUMMARY                             ║
+╚════════════════════════════════════════════════════════════════╝
 
-Archive Details:
-  Academic Session: ${settings.academicSession}
-  Term: ${termName || settings.currentTerm}
-  Archived On: ${new Date().toLocaleString()}
-  School: ${settings.schoolName}
+Academic Session: ${settings.academicSession}
+Term: ${termName || settings.currentTerm}
+Archive Date: ${new Date().toLocaleString()}
+System: ${settings.systemName}
+School: ${settings.schoolName}
 
-Statistics:
-  Total Students: ${data.students.length}
-  Total Exams: ${data.exams.length}
-  Total Questions: ${data.questions.length}
-  Total Submissions: ${data.submissions.length}
+═══════════════════════════════════════════════════════════════════
+                         STATISTICS
+═══════════════════════════════════════════════════════════════════
 
-Files Included:
-  - data.json (Complete database export)
-  - cbt.db (Database backup)
-  - students.csv (Student list)
-  - results.csv (Exam results)
-  - SUMMARY.txt (This file)
+Total Students: ${data.students.length}
+Total Exams: ${data.exams.length}
+Total Questions: ${data.questions.length}
+Total Submissions: ${data.submissions.length}
 
-════════════════════════════════════════════════════════════════
-                        IMPORTANT NOTES
-════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════
+                         FILES INCLUDED
+═══════════════════════════════════════════════════════════════════
 
-This archive contains ALL data from ${termName || settings.currentTerm}.
-Keep this archive safe for record-keeping and audit purposes.
+✅ data.json - Complete database export
+✅ cbt.db - Database backup file
+✅ students.csv - Student list
+✅ results.csv - Exam results
+✅ SUMMARY.txt - This file
 
-To restore this data in the future, contact your system administrator.
+═══════════════════════════════════════════════════════════════════
+                         IMPORTANT NOTES
+═══════════════════════════════════════════════════════════════════
 
-════════════════════════════════════════════════════════════════
-`;
+• This archive contains all data for ${termName || settings.currentTerm}
+• Keep this archive in a safe location
+• Do not delete this archive - it's your backup
+• To restore data, use the database backup file (cbt.db)
 
-        await fs.writeFile(filepath, summary.trim());
+═══════════════════════════════════════════════════════════════════
+        `.trim();
+
+        await fs.writeFile(filepath, summary, 'utf8');
     }
 
     /**
-     * Reset database for new term
-     * Keeps: exams, questions, settings
-     * Clears: students, submissions, audit_logs
+     * Reset database for new term - clear students and submissions, keep exams/questions
      */
     async resetDatabase() {
         try {
-            const db = getDb();
-
             console.log('🗑️  Resetting database for new term...');
 
-            // Clear student data
-            db.prepare('DELETE FROM students').run();
+            const { run } = require('../utils/db');
+
+            // Clear students table
+            await run('DELETE FROM students');
             console.log('   ✅ Students cleared');
 
-            // Clear submissions
-            db.prepare('DELETE FROM submissions').run();
+            // Clear submissions table
+            await run('DELETE FROM submissions');
             console.log('   ✅ Submissions cleared');
 
-            // Clear audit logs
-            db.prepare('DELETE FROM audit_logs').run();
+            // Clear audit logs (optional - you may want to keep these)
+            await run('DELETE FROM audit_logs');
             console.log('   ✅ Audit logs cleared');
 
-            // Keep: exams, questions, settings
+            // Note: exams and questions tables are NOT cleared
+            // This allows reusing questions across terms
 
             console.log('✅ Database reset complete - Ready for new term!');
 
             return {
                 success: true,
-                message: 'Database cleared. Exams and questions retained.',
+                message: 'Database reset successfully',
                 cleared: {
                     students: true,
                     submissions: true,
@@ -218,7 +280,7 @@ To restore this data in the future, contact your system administrator.
                 }
             };
         } catch (error) {
-            console.error('❌ Reset error:', error);
+            console.error('❌ Reset database error:', error);
             throw error;
         }
     }
@@ -228,33 +290,39 @@ To restore this data in the future, contact your system administrator.
      */
     async listArchives() {
         try {
-            await this.ensureArchiveDirectory();
-
             const archives = [];
-            const dirs = await fs.readdir(this.archiveDir);
+            const files = await fs.readdir(this.archiveDir);
 
-            for (const dir of dirs) {
-                const archivePath = path.join(this.archiveDir, dir);
+            for (const file of files) {
+                const archivePath = path.join(this.archiveDir, file);
                 const stats = await fs.stat(archivePath);
 
                 if (stats.isDirectory()) {
-                    const summaryPath = path.join(archivePath, 'SUMMARY.txt');
-                    const dataPath = path.join(archivePath, 'data.json');
-
+                    // Try to read summary from data.json
+                    const dataJsonPath = path.join(archivePath, 'data.json');
                     let summary = null;
-                    if (fs.existsSync(dataPath)) {
-                        const data = await fs.readJSON(dataPath);
+
+                    if (await fs.pathExists(dataJsonPath)) {
+                        const data = await fs.readJSON(dataJsonPath);
+
+                        // Try to read settings from archived data
+                        const settingsPath = path.join(archivePath, 'settings.json');
+                        let archivedSettings = null;
+                        if (await fs.pathExists(settingsPath)) {
+                            archivedSettings = await fs.readJSON(settingsPath);
+                        }
+
                         summary = {
-                            session: data.settings?.academicSession || 'Unknown',
-                            term: data.settings?.currentTerm || 'Unknown',
+                            session: archivedSettings?.academicSession || 'Unknown',
+                            term: archivedSettings?.currentTerm || 'Unknown',
                             students: data.students?.length || 0,
                             submissions: data.submissions?.length || 0,
-                            archivedAt: data.archivedAt || stats.birthtime.toISOString()
+                            archivedAt: stats.birthtime
                         };
                     }
 
                     archives.push({
-                        name: dir,
+                        name: file,
                         path: archivePath,
                         size: await this.getDirectorySize(archivePath),
                         createdAt: stats.birthtime,
@@ -264,7 +332,7 @@ To restore this data in the future, contact your system administrator.
             }
 
             // Sort by creation date (newest first)
-            archives.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            archives.sort((a, b) => b.createdAt - a.createdAt);
 
             return archives;
         } catch (error) {
@@ -283,21 +351,21 @@ To restore this data in the future, contact your system administrator.
         for (const file of files) {
             const filePath = path.join(dirPath, file);
             const stats = await fs.stat(filePath);
-            totalSize += stats.size;
+
+            if (stats.isFile()) {
+                totalSize += stats.size;
+            } else if (stats.isDirectory()) {
+                totalSize += await this.getDirectorySize(filePath);
+            }
         }
 
         // Convert to human-readable format
         if (totalSize < 1024) return `${totalSize} B`;
         if (totalSize < 1024 * 1024) return `${(totalSize / 1024).toFixed(2)} KB`;
-        return `${(totalSize / (1024 * 1024)).toFixed(2)} MB`;
-    }
-
-    /**
-     * Get archive directory path
-     */
-    getArchivePath() {
-        return this.archiveDir;
+        if (totalSize < 1024 * 1024 * 1024) return `${(totalSize / (1024 * 1024)).toFixed(2)} MB`;
+        return `${(totalSize / (1024 * 1024 * 1024)).toFixed(2)} GB`;
     }
 }
 
+// Export singleton instance
 module.exports = new ArchiveService();

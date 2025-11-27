@@ -1,5 +1,3 @@
-// backend/src/controllers/archiveController.js
-
 const archiveService = require('../services/archiveService');
 
 /**
