@@ -14,14 +14,38 @@ export default function StudentLogin() {
         e.preventDefault();
         setLoading(true);
         setError('');
+
         try {
             const res = await studentLogin({ exam_code: examCode, password });
+
+            // ✅ FIXED: Proper handling of active_exams with fallback
+            const activeExams = res.data.active_exams || [];
+
+            // Store in localStorage
             localStorage.setItem('examCode', examCode);
-            localStorage.setItem('studentName', res.data.full_name);
-            localStorage.setItem('activeExams', JSON.stringify(res.data.active_exams));
+            localStorage.setItem('studentName', res.data.full_name || 'Student');
+            localStorage.setItem('studentClass', res.data.class || '');
+
+            // ✅ FIXED: Only store if activeExams exists and is an array
+            if (Array.isArray(activeExams) && activeExams.length > 0) {
+                localStorage.setItem('activeExams', JSON.stringify(activeExams));
+            } else {
+                localStorage.removeItem('activeExams'); // Clear any old data
+            }
+
+            // Navigate to exam selection
             navigate('/exam-select');
         } catch (err) {
-            setError(err.response?.data?.error || 'Login failed. Please check your credentials.');
+            // ✅ FIXED: Better error message handling with user-friendly defaults
+            const errorMessage = err.response?.data?.error ||
+                err.message ||
+                'Login failed. Please check your credentials and try again.';
+            setError(errorMessage);
+
+            // Clear localStorage on error
+            localStorage.removeItem('examCode');
+            localStorage.removeItem('studentName');
+            localStorage.removeItem('activeExams');
         } finally {
             setLoading(false);
         }
@@ -72,11 +96,15 @@ export default function StudentLogin() {
                                     value={examCode}
                                     onChange={(e) => setExamCode(e.target.value.toUpperCase())}
                                     className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 text-sm"
-                                    placeholder="e.g., GEN-JSS1-001A"
+                                    placeholder="e.g., MOLEK-JSS1-XXXX"
                                     required
                                     autoFocus
+                                    disabled={loading}
                                 />
                             </div>
+                            <p className="mt-1 text-xs text-gray-500">
+                                Enter your unique exam code (Format: MOLEK-CLASS-XXXX)
+                            </p>
                         </div>
 
                         {/* Password Field */}
@@ -95,8 +123,12 @@ export default function StudentLogin() {
                                     className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 text-sm"
                                     placeholder="Enter your password"
                                     required
+                                    disabled={loading}
                                 />
                             </div>
+                            <p className="mt-1 text-xs text-gray-500">
+                                6-character password provided by your administrator
+                            </p>
                         </div>
 
                         {/* Submit Button */}
@@ -121,9 +153,14 @@ export default function StudentLogin() {
 
                     {/* Help Text */}
                     <div className="mt-6 text-center">
-                        <p className="text-xs text-gray-500">
-                            🔒 Your exam session is secure and monitored
-                        </p>
+                        <div className="flex items-center justify-center gap-2">
+                            <svg className="h-4 w-4 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" />
+                            </svg>
+                            <p className="text-xs text-gray-600 font-medium">
+                                Your exam session is secure and monitored
+                            </p>
+                        </div>
                     </div>
                 </div>
 
@@ -134,6 +171,80 @@ export default function StudentLogin() {
                     </p>
                 </div>
             </div>
+
+            {/* ✅ ADDED: Inline styles to ensure colors work even if Tailwind fails */}
+            <style jsx>{`
+                .animate-shake {
+                    animation: shake 0.5s;
+                }
+                
+                @keyframes shake {
+                    0%, 100% { transform: translateX(0); }
+                    10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+                    20%, 40%, 60%, 80% { transform: translateX(5px); }
+                }
+                
+                /* Fallback colors if Tailwind doesn't load */
+                .bg-blue-600 {
+                    background-color: #2563eb !important;
+                }
+                
+                .bg-blue-700 {
+                    background-color: #1d4ed8 !important;
+                }
+                
+                .text-blue-600 {
+                    color: #2563eb !important;
+                }
+                
+                .text-red-700 {
+                    color: #b91c1c !important;
+                }
+                
+                .bg-red-50 {
+                    background-color: #fef2f2 !important;
+                }
+                
+                .border-red-500 {
+                    border-color: #ef4444 !important;
+                }
+                
+                .text-red-500 {
+                    color: #ef4444 !important;
+                }
+                
+                .text-gray-900 {
+                    color: #111827 !important;
+                }
+                
+                .text-gray-700 {
+                    color: #374151 !important;
+                }
+                
+                .text-gray-600 {
+                    color: #4b5563 !important;
+                }
+                
+                .text-gray-500 {
+                    color: #6b7280 !important;
+                }
+                
+                .text-gray-400 {
+                    color: #9ca3af !important;
+                }
+                
+                .bg-white {
+                    background-color: #ffffff !important;
+                }
+                
+                .border-gray-300 {
+                    border-color: #d1d5db !important;
+                }
+                
+                .border-gray-100 {
+                    border-color: #f3f4f6 !important;
+                }
+            `}</style>
         </div>
     );
 }

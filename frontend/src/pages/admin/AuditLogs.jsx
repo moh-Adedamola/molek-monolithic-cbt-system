@@ -31,44 +31,104 @@ const AuditLogs = () => {
     const loadData = async () => {
         try {
             setLoading(true);
+            setAlert(null); // Clear previous alerts
+
             const [logsRes, statsRes] = await Promise.all([
                 getAuditLogs(filters),
                 getAuditStats()
             ]);
 
-            setLogs(logsRes.data.logs || []);
-            setStats(statsRes.data);
+            // ✅ FIXED: Handle new response format
+            // Backend returns: { success: true, logs: [...], count: X }
+            const logsData = logsRes.data?.logs || logsRes.data || [];
+            setLogs(Array.isArray(logsData) ? logsData : []);
+
+            // ✅ FIXED: Handle new response format
+            // Backend returns: { success: true, total: X, today: Y, ... }
+            const statsData = statsRes.data || {};
+            setStats({
+                total: statsData.total || 0,
+                today: statsData.today || 0,
+                successful: statsData.successful || 0,
+                failed: statsData.failed || 0,
+                thisWeek: statsData.thisWeek || 0,
+                topActions: statsData.topActions || []
+            });
         } catch (error) {
-            setAlert({ type: 'error', message: 'Failed to load audit logs' });
+            console.error('❌ Failed to load audit data:', error);
+
+            // ✅ FIXED: Show more specific error message
+            const errorMessage = error.response?.data?.error ||
+                error.response?.data?.details ||
+                error.message ||
+                'Failed to load audit logs. Please try again.';
+
+            setAlert({
+                type: 'error',
+                message: errorMessage
+            });
+
+            // Set empty defaults on error
+            setLogs([]);
+            setStats({
+                total: 0,
+                today: 0,
+                successful: 0,
+                failed: 0,
+                thisWeek: 0,
+                topActions: []
+            });
         } finally {
             setLoading(false);
         }
     };
 
     const handleExport = () => {
-        const csv = [
-            ['Timestamp', 'Action', 'User Type', 'User', 'Details', 'IP Address', 'Status'].join(','),
-            ...logs.map(log => [
-                new Date(log.created_at).toISOString(),
-                log.action,
-                log.user_type,
-                log.user_identifier,
-                log.details.replace(/,/g, ';'),
-                log.ip_address,
-                log.status
-            ].join(','))
-        ].join('\n');
+        if (!logs || logs.length === 0) {
+            setAlert({
+                type: 'warning',
+                message: 'No logs to export'
+            });
+            return;
+        }
 
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `audit_logs_${new Date().toISOString().split('T')[0]}.csv`;
-        a.click();
-        window.URL.revokeObjectURL(url);
+        try {
+            const csv = [
+                ['Timestamp', 'Action', 'User Type', 'User', 'Details', 'IP Address', 'Status'].join(','),
+                ...logs.map(log => [
+                    new Date(log.created_at).toISOString(),
+                    log.action || '',
+                    log.user_type || '',
+                    log.user_identifier || '',
+                    (log.details || '').replace(/,/g, ';'),
+                    log.ip_address || '',
+                    log.status || ''
+                ].join(','))
+            ].join('\n');
+
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `audit_logs_${new Date().toISOString().split('T')[0]}.csv`;
+            a.click();
+            window.URL.revokeObjectURL(url);
+
+            setAlert({
+                type: 'success',
+                message: `Exported ${logs.length} audit logs successfully`
+            });
+        } catch (error) {
+            console.error('❌ Export failed:', error);
+            setAlert({
+                type: 'error',
+                message: 'Failed to export logs. Please try again.'
+            });
+        }
     };
 
     const getActionBadge = (action) => {
+        if (!action) return 'default';
         if (action.includes('SUBMITTED') || action.includes('CREATED')) return 'success';
         if (action.includes('ACTIVATED')) return 'info';
         if (action.includes('DELETED')) return 'error';
@@ -90,6 +150,7 @@ const AuditLogs = () => {
             key: 'created_at',
             label: 'Timestamp',
             render: (value) => {
+                if (!value) return <span className="text-gray-400">N/A</span>;
                 const date = new Date(value);
                 return (
                     <div className="text-sm">
@@ -104,7 +165,7 @@ const AuditLogs = () => {
             label: 'Action',
             render: (value) => (
                 <Badge variant={getActionBadge(value)} size="sm">
-                    {value.replace(/_/g, ' ')}
+                    {value ? value.replace(/_/g, ' ') : 'UNKNOWN'}
                 </Badge>
             ),
         },
@@ -113,7 +174,7 @@ const AuditLogs = () => {
             label: 'User Type',
             render: (value) => (
                 <Badge variant={value === 'admin' ? 'info' : 'default'} size="sm">
-                    {value}
+                    {value || 'unknown'}
                 </Badge>
             ),
         },
@@ -121,21 +182,21 @@ const AuditLogs = () => {
             key: 'user_identifier',
             label: 'User',
             render: (value) => (
-                <span className="font-medium text-gray-900">{value}</span>
+                <span className="font-medium text-gray-900">{value || 'N/A'}</span>
             ),
         },
         {
             key: 'details',
             label: 'Details',
             render: (value) => (
-                <span className="text-sm text-gray-600">{value}</span>
+                <span className="text-sm text-gray-600">{value || 'No details'}</span>
             ),
         },
         {
             key: 'ip_address',
             label: 'IP Address',
             render: (value) => (
-                <span className="text-xs font-mono text-gray-500">{value}</span>
+                <span className="text-xs font-mono text-gray-500">{value || 'unknown'}</span>
             ),
         },
         {
@@ -143,7 +204,7 @@ const AuditLogs = () => {
             label: 'Status',
             render: (value) => (
                 <Badge variant={getStatusBadge(value)} size="sm">
-                    {value}
+                    {value || 'unknown'}
                 </Badge>
             ),
         },
@@ -152,7 +213,11 @@ const AuditLogs = () => {
     return (
         <div className="space-y-6">
             {alert && (
-                <Alert type={alert.type} message={alert.message} onClose={() => setAlert(null)} />
+                <Alert
+                    type={alert.type}
+                    message={alert.message}
+                    onClose={() => setAlert(null)}
+                />
             )}
 
             <div className="flex items-center justify-between">
@@ -161,11 +226,11 @@ const AuditLogs = () => {
                     <p className="mt-1 text-sm text-gray-600">System activity tracking and monitoring</p>
                 </div>
                 <div className="flex gap-2">
-                    <Button onClick={loadData} variant="outline">
-                        <RefreshCw className="mr-2 h-4 w-4" />
+                    <Button onClick={loadData} variant="outline" disabled={loading}>
+                        <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
                         Refresh
                     </Button>
-                    <Button onClick={handleExport} variant="outline" disabled={logs.length === 0}>
+                    <Button onClick={handleExport} variant="outline" disabled={logs.length === 0 || loading}>
                         <Download className="mr-2 h-4 w-4" />
                         Export CSV
                     </Button>
@@ -175,11 +240,11 @@ const AuditLogs = () => {
             {/* Statistics */}
             {stats && (
                 <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
-                    <Card title="Total Logs" value={stats.total} />
-                    <Card title="Today" value={stats.today} subtitle="Activities today" />
-                    <Card title="Successful" value={stats.successful} subtitle="Completed" />
-                    <Card title="Failed" value={stats.failed} subtitle="Errors" />
-                    <Card title="This Week" value={stats.thisWeek} subtitle="Last 7 days" />
+                    <Card title="Total Logs" value={stats.total || 0} />
+                    <Card title="Today" value={stats.today || 0} subtitle="Activities today" />
+                    <Card title="Successful" value={stats.successful || 0} subtitle="Completed" />
+                    <Card title="Failed" value={stats.failed || 0} subtitle="Errors" />
+                    <Card title="This Week" value={stats.thisWeek || 0} subtitle="Last 7 days" />
                 </div>
             )}
 
@@ -198,6 +263,7 @@ const AuditLogs = () => {
                             value={filters.search}
                             onChange={(e) => setFilters({ ...filters, search: e.target.value })}
                             className="pl-10 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            disabled={loading}
                         />
                     </div>
                     <Select
@@ -208,6 +274,7 @@ const AuditLogs = () => {
                             { value: 'admin', label: 'Admin' },
                             { value: 'student', label: 'Student' },
                         ]}
+                        disabled={loading}
                     />
                     <Select
                         value={filters.status}
@@ -218,8 +285,9 @@ const AuditLogs = () => {
                             { value: 'failure', label: 'Failure' },
                             { value: 'warning', label: 'Warning' },
                         ]}
+                        disabled={loading}
                     />
-                    <Button onClick={loadData} className="w-full">
+                    <Button onClick={loadData} className="w-full" disabled={loading}>
                         Apply Filters
                     </Button>
                 </div>
@@ -229,12 +297,14 @@ const AuditLogs = () => {
                         label="From Date"
                         value={filters.fromDate}
                         onChange={(e) => setFilters({ ...filters, fromDate: e.target.value })}
+                        disabled={loading}
                     />
                     <Input
                         type="date"
                         label="To Date"
                         value={filters.toDate}
                         onChange={(e) => setFilters({ ...filters, toDate: e.target.value })}
+                        disabled={loading}
                     />
                 </div>
             </Card>

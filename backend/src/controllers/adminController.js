@@ -2,7 +2,8 @@ const { run, get, all } = require('../utils/db');
 const { hashPassword } = require('../services/authService');
 const { generatePassword, generateExamCode } = require('../services/codeGenerator');
 const { parseCsvBuffer } = require('../services/csvService');
-const { logAudit, ACTIONS } = require('../services/auditService');
+// ✅ FIXED: Added getAuditLogs and getAuditStats to imports
+const { logAudit, ACTIONS, getAuditLogs, getAuditStats } = require('../services/auditService');
 
 
 function getClientIp(req) {
@@ -227,6 +228,19 @@ async function exportStudentsByClass(req, res) {
 
         console.log(`📥 Exporting ${students.length} students from ${classLevel} with passwords`);
 
+        if (students.length === 0) {
+            return res.status(404).json({ error: 'No students found for this class' });
+        }
+
+        const textOutput = generateFormattedCredentials(students.map(s => ({
+            first_name: s.first_name,
+            middle_name: s.middle_name,
+            last_name: s.last_name,
+            class: s.class,
+            examCode: s.exam_code,
+            password: s.plain_password
+        })));
+
         // Audit log
         logAudit({
             action: ACTIONS.STUDENTS_EXPORTED,
@@ -234,22 +248,14 @@ async function exportStudentsByClass(req, res) {
             userIdentifier: 'admin',
             details: `Exported ${students.length} students from ${classLevel}`,
             ipAddress: getClientIp(req),
-            status: 'success',
-            metadata: { class: classLevel, count: students.length }
+            status: 'success'
         });
 
-        const csvHeader = 'first_name,middle_name,last_name,class,student_id,exam_code,password\n';
-        const csvRows = students.map(s =>
-            `${s.first_name},${s.middle_name || ''},${s.last_name},${s.class},${s.student_id || ''},${s.exam_code},${s.plain_password || 'N/A'}`
-        ).join('\n');
-
-        const csv = csvHeader + csvRows;
-
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', `attachment; filename=${classLevel}_students.csv`);
-        res.send(csv);
+        res.setHeader('Content-Type', 'text/plain');
+        res.setHeader('Content-Disposition', `attachment; filename="${classLevel}_students.txt"`);
+        res.send(textOutput);
     } catch (error) {
-        console.error('❌ Export students error:', error);
+        console.error('Export students error:', error);
         res.status(500).json({ error: 'Failed to export students' });
     }
 }
@@ -260,70 +266,53 @@ async function exportStudentsByClass(req, res) {
 
 async function uploadQuestions(req, res) {
     try {
-        const { subject, class: classLevel } = req.body;
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-        if (!req.file || !subject || !classLevel) {
-            return res.status(400).json({ error: 'file, subject, and class required' });
+        const csvData = req.file.buffer.toString('utf8');
+        const questions = await parseCsvBuffer(req.file.buffer);
+
+        if (questions.length === 0) {
+            return res.status(400).json({ error: 'No valid questions found in file' });
         }
 
-        const rows = await parseCsvBuffer(req.file.buffer);
-        if (rows.length === 0) {
-            return res.status(400).json({ error: 'CSV is empty' });
+        const subject = questions[0].subject;
+        const classLevel = questions[0].class;
+
+        if (!subject || !classLevel) {
+            return res.status(400).json({ error: 'Subject and class are required in CSV' });
         }
 
-        // Get or create exam
-        let exam = await get('SELECT id FROM exams WHERE subject = ? AND class = ?', [subject, classLevel]);
+        const existingExam = await get('SELECT id FROM exams WHERE subject = ? AND class = ?', [subject, classLevel]);
+        let examId;
 
-        if (!exam) {
-            const result = await run(`
-                INSERT INTO exams (subject, class, is_active, duration_minutes)
-                VALUES (?, ?, 0, 60)
-            `, [subject, classLevel]);
-            exam = { id: result.lastID };
+        if (existingExam) {
+            examId = existingExam.id;
+            await run('DELETE FROM questions WHERE exam_id = ?', [examId]);
+        } else {
+            const result = await run('INSERT INTO exams (subject, class, duration_minutes, is_active) VALUES (?, ?, 60, 0)', [subject, classLevel]);
+            examId = result.lastID;
         }
 
-        // Insert questions
-        let count = 0;
-        for (const row of rows) {
-            const question = row.question_text?.trim();
-            const optA = row.option_a?.trim();
-            const optB = row.option_b?.trim();
-            const optC = row.option_c?.trim();
-            const optD = row.option_d?.trim();
-            const correct = row.correct_answer?.trim()?.toUpperCase();
-
-            if (!question || !optA || !optB || !optC || !optD || !correct) continue;
-            if (!['A', 'B', 'C', 'D'].includes(correct)) continue;
-
+        for (const q of questions) {
             await run(`
                 INSERT INTO questions (exam_id, question_text, option_a, option_b, option_c, option_d, correct_answer)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            `, [exam.id, question, optA, optB, optC, optD, correct]);
-            count++;
+            `, [examId, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d, q.correct_answer]);
         }
 
-        // Audit log
         logAudit({
             action: ACTIONS.QUESTIONS_UPLOADED,
             userType: 'admin',
             userIdentifier: 'admin',
-            details: `Uploaded ${count} questions for ${subject} - ${classLevel}`,
+            details: `Uploaded ${questions.length} questions for ${subject} (${classLevel})`,
             ipAddress: getClientIp(req),
             status: 'success',
-            metadata: { subject, class: classLevel, questionCount: count }
+            metadata: { subject, class: classLevel, questionCount: questions.length, examId }
         });
 
-        res.json({ message: `Uploaded ${count} questions for ${subject} - ${classLevel}` });
+        res.json({ message: `${questions.length} questions uploaded for ${subject} (${classLevel})`, examId });
     } catch (error) {
         console.error('Upload questions error:', error);
-        logAudit({
-            action: ACTIONS.QUESTIONS_UPLOADED,
-            userType: 'admin',
-            userIdentifier: 'admin',
-            details: `Failed to upload questions: ${error.message}`,
-            ipAddress: getClientIp(req),
-            status: 'failure'
-        });
         res.status(500).json({ error: 'Failed to upload questions' });
     }
 }
@@ -331,10 +320,10 @@ async function uploadQuestions(req, res) {
 async function getAllQuestions(req, res) {
     try {
         const questions = await all(`
-            SELECT q.*, e.subject, e.class, e.is_active, e.duration_minutes
+            SELECT q.*, e.subject, e.class
             FROM questions q
                      JOIN exams e ON q.exam_id = e.id
-            ORDER BY e.subject, e.class, q.id
+            ORDER BY e.subject, q.id
         `);
 
         res.json({ questions });
@@ -346,33 +335,30 @@ async function getAllQuestions(req, res) {
 
 async function activateExam(req, res) {
     try {
-        const { subject, class: classLevel, is_active } = req.body;
+        const { examId, is_active } = req.body;
 
-        if (!subject || !classLevel || is_active === undefined) {
-            return res.status(400).json({ error: 'subject, class, and is_active required' });
+        if (examId === undefined || is_active === undefined) {
+            return res.status(400).json({ error: 'examId and is_active required' });
         }
 
-        const result = await run('UPDATE exams SET is_active = ? WHERE subject = ? AND class = ?', [is_active ? 1 : 0, subject, classLevel]);
+        await run('UPDATE exams SET is_active = ? WHERE id = ?', [is_active ? 1 : 0, examId]);
 
-        if (result.changes === 0) {
-            return res.status(404).json({ error: 'Exam not found' });
-        }
+        const exam = await get('SELECT subject, class FROM exams WHERE id = ?', [examId]);
 
-        // Audit log
         logAudit({
             action: is_active ? ACTIONS.EXAM_ACTIVATED : ACTIONS.EXAM_DEACTIVATED,
             userType: 'admin',
             userIdentifier: 'admin',
-            details: `${is_active ? 'Activated' : 'Deactivated'} exam: ${subject} - ${classLevel}`,
+            details: `${is_active ? 'Activated' : 'Deactivated'} exam: ${exam.subject} (${exam.class})`,
             ipAddress: getClientIp(req),
             status: 'success',
-            metadata: { subject, class: classLevel, isActive: is_active }
+            metadata: { examId, subject: exam.subject, class: exam.class }
         });
 
         res.json({ message: `Exam ${is_active ? 'activated' : 'deactivated'}` });
     } catch (error) {
         console.error('Activate exam error:', error);
-        res.status(500).json({ error: 'Failed to update exam status' });
+        res.status(500).json({ error: 'Failed to activate/deactivate exam' });
     }
 }
 
@@ -383,19 +369,18 @@ async function getAllExams(req, res) {
                 e.id,
                 e.subject,
                 e.class,
-                e.is_active,
                 e.duration_minutes,
-                e.created_at,
-                COUNT(q.id) as total_questions
+                e.is_active,
+                COUNT(q.id) as question_count
             FROM exams e
                      LEFT JOIN questions q ON e.id = q.exam_id
             GROUP BY e.id
-            ORDER BY e.created_at DESC
+            ORDER BY e.subject, e.class
         `);
 
         res.json({ exams });
     } catch (error) {
-        console.error('Get exams error:', error);
+        console.error('Get all exams error:', error);
         res.status(500).json({ error: 'Failed to get exams' });
     }
 }
@@ -404,21 +389,7 @@ async function getExamById(req, res) {
     try {
         const { id } = req.params;
 
-        const exam = await get(`
-            SELECT
-                e.id,
-                e.subject,
-                e.class,
-                e.is_active,
-                e.duration_minutes,
-                e.created_at,
-                COUNT(q.id) as total_questions
-            FROM exams e
-                     LEFT JOIN questions q ON e.id = q.exam_id
-            WHERE e.id = ?
-            GROUP BY e.id
-        `, [id]);
-
+        const exam = await get('SELECT * FROM exams WHERE id = ?', [id]);
         if (!exam) {
             return res.status(404).json({ error: 'Exam not found' });
         }
@@ -427,7 +398,7 @@ async function getExamById(req, res) {
 
         res.json({ exam, questions });
     } catch (error) {
-        console.error('Get exam error:', error);
+        console.error('Get exam by ID error:', error);
         res.status(500).json({ error: 'Failed to get exam' });
     }
 }
@@ -441,21 +412,18 @@ async function updateExam(req, res) {
             return res.status(400).json({ error: 'duration_minutes required' });
         }
 
-        const result = await run('UPDATE exams SET duration_minutes = ? WHERE id = ?', [duration_minutes, id]);
+        await run('UPDATE exams SET duration_minutes = ? WHERE id = ?', [duration_minutes, id]);
 
-        if (result.changes === 0) {
-            return res.status(404).json({ error: 'Exam not found' });
-        }
+        const exam = await get('SELECT subject, class FROM exams WHERE id = ?', [id]);
 
-        // Audit log
         logAudit({
             action: ACTIONS.EXAM_UPDATED,
             userType: 'admin',
             userIdentifier: 'admin',
-            details: `Updated exam duration to ${duration_minutes} minutes (ID: ${id})`,
+            details: `Updated exam duration: ${exam.subject} (${exam.class}) - ${duration_minutes} minutes`,
             ipAddress: getClientIp(req),
             status: 'success',
-            metadata: { examId: id, durationMinutes: duration_minutes }
+            metadata: { examId: id, duration: duration_minutes }
         });
 
         res.json({ message: 'Exam updated successfully' });
@@ -469,27 +437,24 @@ async function deleteExam(req, res) {
     try {
         const { id } = req.params;
 
-        // Get exam details before deleting
         const exam = await get('SELECT subject, class FROM exams WHERE id = ?', [id]);
 
-        const result = await run('DELETE FROM exams WHERE id = ?', [id]);
-
-        if (result.changes === 0) {
+        if (!exam) {
             return res.status(404).json({ error: 'Exam not found' });
         }
 
-        // Audit log
-        if (exam) {
-            logAudit({
-                action: ACTIONS.EXAM_DELETED,
-                userType: 'admin',
-                userIdentifier: 'admin',
-                details: `Deleted exam: ${exam.subject} - ${exam.class}`,
-                ipAddress: getClientIp(req),
-                status: 'success',
-                metadata: { examId: id, subject: exam.subject, class: exam.class }
-            });
-        }
+        await run('DELETE FROM questions WHERE exam_id = ?', [id]);
+        await run('DELETE FROM exams WHERE id = ?', [id]);
+
+        logAudit({
+            action: ACTIONS.EXAM_DELETED,
+            userType: 'admin',
+            userIdentifier: 'admin',
+            details: `Deleted exam: ${exam.subject} (${exam.class})`,
+            ipAddress: getClientIp(req),
+            status: 'success',
+            metadata: { examId: id, subject: exam.subject, class: exam.class }
+        });
 
         res.json({ message: 'Exam deleted successfully' });
     } catch (error) {
@@ -500,23 +465,21 @@ async function deleteExam(req, res) {
 
 async function getSubjects(req, res) {
     try {
-        // Get all exams with their subjects and classes
         const rows = await all('SELECT DISTINCT subject, class FROM exams ORDER BY class, subject');
+
         console.log('📚 Raw exams data:', rows);
 
-        // Group by class
         const subjectsByClass = {};
-        rows.forEach(row => {
-            if (!subjectsByClass[row.class]) {
-                subjectsByClass[row.class] = [];
+        rows.forEach(r => {
+            if (!subjectsByClass[r.class]) {
+                subjectsByClass[r.class] = [];
             }
-            if (!subjectsByClass[row.class].includes(row.subject)) {
-                subjectsByClass[row.class].push(row.subject);
-            }
+            subjectsByClass[r.class].push(r.subject);
         });
 
         console.log('📚 Subjects grouped by class:', subjectsByClass);
-        res.json({ subjects: subjectsByClass });
+
+        res.json({ subjectsByClass });
     } catch (error) {
         console.error('❌ getSubjects error:', error);
         res.status(500).json({ error: 'Failed to get subjects' });
@@ -529,42 +492,10 @@ async function getSubjects(req, res) {
 
 async function getClassResults(req, res) {
     try {
-        const { class: classLevel } = req.query;
-
-        if (!classLevel) {
-            return res.status(400).json({ error: 'class parameter required' });
-        }
-
-        const results = await all(`
-            SELECT
-                s.first_name,
-                s.middle_name,
-                s.last_name,
-                s.class,
-                s.exam_code,
-                sub.subject,
-                sub.score,
-                sub.total_questions,
-                sub.submitted_at
-            FROM submissions sub
-                     JOIN students s ON sub.student_id = s.id
-            WHERE s.class = ?
-            ORDER BY s.last_name, s.first_name, sub.subject
-        `, [classLevel]);
-
-        res.json({ results });
-    } catch (error) {
-        console.error('Get class results error:', error);
-        res.status(500).json({ error: 'Failed to get results' });
-    }
-}
-
-async function exportClassResultsAsText(req, res) {
-    try {
         const { class: classLevel, subject } = req.query;
 
         if (!classLevel || !subject) {
-            return res.status(400).json({ error: 'class and subject parameters required' });
+            return res.status(400).json({ error: 'class and subject required' });
         }
 
         const results = await all(`
@@ -579,17 +510,51 @@ async function exportClassResultsAsText(req, res) {
             FROM submissions sub
                      JOIN students s ON sub.student_id = s.id
             WHERE s.class = ? AND sub.subject = ?
-            ORDER BY s.last_name, s.first_name
+            ORDER BY sub.score DESC, s.last_name, s.first_name
         `, [classLevel, subject]);
 
-        let text = `EXAM RESULTS: ${subject} - ${classLevel}\n`;
-        text += `Generated: ${new Date().toLocaleString()}\n`;
-        text += `Total Students: ${results.length}\n\n`;
-        text += '='.repeat(80) + '\n\n';
+        res.json({ results });
+    } catch (error) {
+        console.error('Get class results error:', error);
+        res.status(500).json({ error: 'Failed to get class results' });
+    }
+}
+
+async function exportClassResultsAsText(req, res) {
+    try {
+        const { class: classLevel, subject } = req.query;
+
+        if (!classLevel || !subject) {
+            return res.status(400).json({ error: 'class and subject required' });
+        }
+
+        const results = await all(`
+            SELECT
+                s.first_name,
+                s.middle_name,
+                s.last_name,
+                s.exam_code,
+                sub.score,
+                sub.total_questions,
+                sub.submitted_at
+            FROM submissions sub
+                     JOIN students s ON sub.student_id = s.id
+            WHERE s.class = ? AND sub.subject = ?
+            ORDER BY sub.score DESC, s.last_name, s.first_name
+        `, [classLevel, subject]);
+
+        let text = '==========================================================\n';
+        text += '                    EXAM RESULTS REPORT\n';
+        text += '==========================================================\n';
+        text += `CLASS: ${classLevel}\n`;
+        text += `SUBJECT: ${subject}\n`;
+        text += `TOTAL STUDENTS: ${results.length}\n`;
+        text += '==========================================================\n\n';
 
         results.forEach((r, i) => {
-            const fullName = `${r.first_name} ${r.middle_name || ''} ${r.last_name}`.trim();
+            const fullName = `${r.first_name} ${r.middle_name ? r.middle_name + ' ' : ''}${r.last_name}`;
             const percentage = Math.round((r.score / r.total_questions) * 100);
+
             text += `${i + 1}. ${fullName}\n`;
             text += `   Exam Code: ${r.exam_code}\n`;
             text += `   Score: ${r.score}/${r.total_questions} (${percentage}%)\n`;
@@ -752,7 +717,15 @@ async function getActiveExamSessions(req, res) {
     }
 }
 
-function getAuditLogsController(req, res) {
+// ============================================
+// AUDIT LOGS - ✅ FIXED FUNCTIONS
+// ============================================
+
+/**
+ * Get audit logs with filters
+ * ✅ FIXED: Added async, await, and proper error handling
+ */
+async function getAuditLogsController(req, res) {
     try {
         const filters = {
             action: req.query.action,
@@ -764,21 +737,44 @@ function getAuditLogsController(req, res) {
             limit: req.query.limit || 100
         };
 
-        const logs = getAuditLogs(filters);
-        res.json({ logs });
+        // ✅ FIXED: Added await - was missing before!
+        const logs = await getAuditLogs(filters);
+
+        res.json({
+            success: true,
+            logs,
+            count: logs.length
+        });
     } catch (error) {
-        console.error('Get audit logs error:', error);
-        res.status(500).json({ error: 'Failed to get audit logs' });
+        console.error('❌ Get audit logs error:', error.message || error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to retrieve audit logs',
+            details: error.message
+        });
     }
 }
 
-function getAuditStatsController(req, res) {
+/**
+ * Get audit statistics
+ * ✅ FIXED: Added async, await, and proper error handling
+ */
+async function getAuditStatsController(req, res) {
     try {
-        const stats = getAuditStats();
-        res.json(stats);
+        // ✅ FIXED: Added await - was missing before!
+        const stats = await getAuditStats();
+
+        res.json({
+            success: true,
+            ...stats
+        });
     } catch (error) {
-        console.error('Get audit stats error:', error);
-        res.status(500).json({ error: 'Failed to get audit stats' });
+        console.error('❌ Get audit stats error:', error.message || error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to retrieve audit statistics',
+            details: error.message
+        });
     }
 }
 
