@@ -2,6 +2,17 @@ const { run, get, all } = require('../utils/db');
 const { verifyPassword } = require('../services/authService');
 const { getCorrectAnswers, gradeExam } = require('../services/examService');
 const { logAudit, ACTIONS } = require('../services/auditService');
+const { getSettings } = require('../services/settingsService'); // ✅ ADD THIS
+
+// ✅ ADD: Shuffle function
+function shuffleArray(array) {
+    const shuffled = [...array];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+}
 
 // Helper to get IP address
 function getClientIp(req) {
@@ -102,349 +113,239 @@ async function studentLogin(req, res) {
             userIdentifier: exam_code || 'unknown',
             details: 'System error during login',
             ipAddress: getClientIp(req),
-            status: 'failure',
-            metadata: { error: error.message }
+            status: 'failure'
         });
-        res.status(500).json({
-            error: 'Login failed due to a system error. Please try again or contact your administrator.'
-        });
+        res.status(500).json({ error: 'An error occurred. Please try again.' });
     }
 }
 
-/**
- * Get exam questions and track start time
- * ✅ Returns saved answers if student is resuming
- */
+// ✅ FIXED: Using req.params and req.query like your original
 async function getExamQuestions(req, res) {
     try {
         const { subject } = req.params;
         const { exam_code } = req.query;
 
-        if (!exam_code) {
-            return res.status(400).json({
-                error: 'Exam code is required'
-            });
+        console.log('📝 getExamQuestions:', { subject, exam_code });
+
+        if (!subject || !exam_code) {
+            return res.status(400).json({ error: 'Subject and exam code are required' });
         }
 
-        const student = await get(`
-            SELECT s.id, s.class, s.first_name, s.last_name
-            FROM students s
-            WHERE s.exam_code = ?
-        `, [exam_code]);
-
+        const student = await get('SELECT * FROM students WHERE exam_code = ?', [exam_code]);
         if (!student) {
-            return res.status(403).json({
-                error: 'Invalid exam code.'
-            });
+            return res.status(404).json({ error: 'Student not found with this exam code' });
         }
 
-        const exam = await get(`
-            SELECT id, duration_minutes, is_active
-            FROM exams
-            WHERE subject = ? AND class = ? AND is_active = 1
-        `, [subject, student.class]);
+        const exam = await get(
+            'SELECT * FROM exams WHERE subject = ? AND class = ? AND is_active = 1',
+            [subject, student.class]
+        );
 
         if (!exam) {
-            return res.status(403).json({
-                error: 'This exam is not currently active or does not exist for your class.'
-            });
+            return res.status(404).json({ error: 'Exam not found or not active for your class' });
         }
 
-        // ✅ Check if student already started this exam
-        let examSession = await get(`
-            SELECT id, exam_started_at, duration_minutes, answers, submitted_at
-            FROM submissions
-            WHERE student_id = ? AND subject = ?
-        `, [student.id, subject]);
+        // Get questions
+        let questions = await all(
+            'SELECT id, question_text, option_a, option_b, option_c, option_d FROM questions WHERE exam_id = ?',
+            [exam.id]
+        );
 
-        let timeRemaining;
-        let examStartedAt;
-        let isResume = false;
-        let savedAnswers = {}; // ✅ NEW: Store saved answers
+        if (!questions || questions.length === 0) {
+            return res.status(404).json({ error: 'No questions found for this exam' });
+        }
 
-        if (examSession) {
-            // Check if already submitted
-            if (examSession.submitted_at !== null) {
-                return res.status(403).json({
-                    error: 'You have already submitted this exam.'
-                });
+        // ✅ NEW: Get settings and shuffle if enabled
+        const settings = await getSettings();
+        if (settings.shuffleQuestions) {
+            questions = shuffleArray(questions);
+            console.log('🔀 Questions shuffled for student:', exam_code);
+        } else {
+            console.log('📋 Questions NOT shuffled (setting disabled)');
+        }
+
+        const existingSubmission = await get(
+            'SELECT * FROM submissions WHERE student_id = ? AND subject = ?',
+            [student.id, subject]
+        );
+
+        let timeRemaining = exam.duration_minutes * 60;
+        let examStartedAt = null;
+        let savedAnswers = null;
+
+        if (existingSubmission) {
+            if (existingSubmission.submitted_at) {
+                return res.status(400).json({ error: 'You have already submitted this exam. You cannot retake it.' });
             }
 
-            // ✅ NEW: Load saved answers if they exist
-            if (examSession.answers) {
-                try {
-                    savedAnswers = JSON.parse(examSession.answers);
-                    console.log(`📝 Loaded ${Object.keys(savedAnswers).length} saved answers`);
-                } catch (e) {
-                    console.warn('Failed to parse saved answers:', e);
-                    savedAnswers = {};
-                }
-            }
-
-            if (examSession.exam_started_at) {
-                examStartedAt = examSession.exam_started_at;
-                const startTime = new Date(examStartedAt).getTime();
-                const currentTime = Date.now();
-                const elapsedSeconds = Math.floor((currentTime - startTime) / 1000);
-                const totalSeconds = (examSession.duration_minutes || exam.duration_minutes) * 60;
+            if (existingSubmission.exam_started_at) {
+                examStartedAt = new Date(existingSubmission.exam_started_at);
+                const now = Date.now();
+                const elapsedMillis = now - examStartedAt.getTime();
+                const elapsedSeconds = Math.floor(elapsedMillis / 1000);
+                const totalSeconds = exam.duration_minutes * 60;
                 timeRemaining = Math.max(0, totalSeconds - elapsedSeconds);
-                isResume = true;
 
-                console.log(`⏱️  Exam resumed for ${exam_code} - ${subject}:`);
-                console.log(`   Started at: ${examStartedAt}`);
-                console.log(`   Elapsed: ${elapsedSeconds}s (${Math.floor(elapsedSeconds / 60)} mins)`);
-                console.log(`   Remaining: ${timeRemaining}s (${Math.floor(timeRemaining / 60)} mins)`);
-                console.log(`   Saved answers: ${Object.keys(savedAnswers).length}`);
-
-                if (timeRemaining <= 0) {
-                    console.log(`⏰ Time expired for ${exam_code} - ${subject}`);
-                    return res.status(403).json({
-                        error: 'Your exam time has expired. The exam will be auto-submitted.',
+                if (timeRemaining === 0) {
+                    return res.status(400).json({
+                        error: 'Time has expired for this exam. Please contact your administrator.',
                         timeExpired: true
                     });
                 }
-            } else {
-                examStartedAt = new Date().toISOString();
-                await run(`
-                    UPDATE submissions 
-                    SET exam_started_at = ?, duration_minutes = ?
-                    WHERE id = ?
-                `, [examStartedAt, exam.duration_minutes, examSession.id]);
-                timeRemaining = exam.duration_minutes * 60;
-                console.log(`🔧 Fixed session for ${exam_code} - ${subject}: Added start time`);
+
+                if (existingSubmission.answers) {
+                    try {
+                        savedAnswers = JSON.parse(existingSubmission.answers);
+                    } catch (e) {
+                        console.error('Failed to parse saved answers:', e);
+                    }
+                }
+
+                console.log(`⏱️  Exam resumed for ${exam_code} - ${subject}: Elapsed: ${elapsedSeconds}s, Remaining: ${timeRemaining}s`);
             }
         } else {
-            // First time starting exam
-            examStartedAt = new Date().toISOString();
-
-            const result = await run(`
-                INSERT INTO submissions (
-                    student_id, subject, exam_started_at, duration_minutes,
-                    answers, score, total_questions, submitted_at
-                )
-                VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL)
-            `, [student.id, subject, examStartedAt, exam.duration_minutes]);
-
-            timeRemaining = exam.duration_minutes * 60;
-
-            console.log(`🆕 Exam started for ${exam_code} - ${subject}:`);
-            console.log(`   Subject: ${subject}`);
-            console.log(`   Duration: ${exam.duration_minutes} minutes`);
-            console.log(`   Started at: ${examStartedAt}`);
-            console.log(`   Submission ID: ${result.lastID}`);
+            examStartedAt = new Date();
+            await run(
+                `INSERT INTO submissions
+                 (student_id, subject, exam_started_at, duration_minutes, answers, score, total_questions, submitted_at)
+                 VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL)`,
+                [student.id, subject, examStartedAt.toISOString(), exam.duration_minutes]
+            );
+            console.log(`🆕 New exam session started for ${exam_code} - ${subject}`);
         }
 
-        const questions = await all(`
-            SELECT q.id, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d
-            FROM questions q
-                     JOIN exams e ON q.exam_id = e.id
-            WHERE e.subject = ? AND e.class = ?
-        `, [subject, student.class]);
-
-        if (!questions || questions.length === 0) {
-            return res.status(404).json({
-                error: 'No questions found for this exam. Please contact your administrator.'
-            });
-        }
-
-        if (!isResume) {
-            await logAudit({
-                action: ACTIONS.EXAM_STARTED,
-                userType: 'student',
-                userIdentifier: exam_code,
-                details: `Started exam: ${subject}`,
-                ipAddress: getClientIp(req),
-                status: 'success',
-                metadata: {
-                    studentId: student.id,
-                    subject,
-                    questionCount: questions.length,
-                    startedAt: examStartedAt
-                }
-            });
-        }
+        // ✅ Log audit
+        await logAudit({
+            action: ACTIONS.EXAM_STARTED,
+            userType: 'student',
+            userIdentifier: exam_code,
+            details: `Started/resumed ${subject} exam`,
+            ipAddress: getClientIp(req),
+            status: 'success',
+            metadata: {
+                subject,
+                questionCount: questions.length,
+                timeRemaining,
+                isResume: !!existingSubmission?.exam_started_at,
+                shuffled: settings.shuffleQuestions
+            }
+        });
 
         res.json({
-            subject,
             questions,
-            student_name: `${student.first_name} ${student.last_name}`,
-            class: student.class,
             time_remaining: timeRemaining,
-            exam_started_at: examStartedAt,
+            exam_started_at: examStartedAt?.toISOString(),
             duration_minutes: exam.duration_minutes,
-            saved_answers: savedAnswers // ✅ NEW: Send saved answers to frontend
+            saved_answers: savedAnswers,
+            shuffled: settings.shuffleQuestions
         });
+
     } catch (error) {
         console.error('❌ getExamQuestions error:', error);
-        res.status(500).json({
-            error: 'Failed to load exam questions. Please try again or contact your administrator.'
-        });
+        res.status(500).json({ error: 'Failed to load exam questions. Please try again.' });
     }
 }
 
-/**
- * ✅ NEW: Auto-save answers during exam (not final submission)
- */
 async function saveExamProgress(req, res) {
-    const { exam_code, answers, subject } = req.body;
-
-    if (!exam_code || !answers || !subject) {
-        return res.status(400).json({
-            error: 'Missing required information.'
-        });
-    }
-
     try {
-        const student = await get(`
-            SELECT s.id, s.class
-            FROM students s
-            WHERE s.exam_code = ?
-        `, [exam_code]);
+        const { exam_code, subject, answers } = req.body;
 
+        if (!exam_code || !subject || !answers) {
+            return res.status(400).json({ error: 'Exam code, subject, and answers are required' });
+        }
+
+        const student = await get('SELECT * FROM students WHERE exam_code = ?', [exam_code]);
         if (!student) {
-            return res.status(403).json({
-                error: 'Invalid exam code.'
-            });
+            return res.status(404).json({ error: 'Student not found' });
         }
 
-        // Find existing session
-        const existingSubmission = await get(`
-            SELECT id, exam_started_at, duration_minutes, submitted_at
-            FROM submissions
-            WHERE student_id = ? AND subject = ?
-        `, [student.id, subject]);
+        const submission = await get(
+            'SELECT * FROM submissions WHERE student_id = ? AND subject = ?',
+            [student.id, subject]
+        );
 
-        if (!existingSubmission) {
-            return res.status(403).json({
-                error: 'No active exam session found.'
-            });
+        if (!submission) {
+            return res.status(400).json({ error: 'No exam session found. Please start the exam first.' });
         }
 
-        // Check if already submitted
-        if (existingSubmission.submitted_at !== null) {
-            return res.status(403).json({
-                error: 'Exam already submitted.'
-            });
+        if (submission.submitted_at) {
+            return res.status(400).json({ error: 'Exam already submitted. Cannot save progress.' });
         }
 
-        // Verify time hasn't expired
-        if (existingSubmission.exam_started_at) {
-            const startTime = new Date(existingSubmission.exam_started_at).getTime();
-            const currentTime = Date.now();
-            const elapsedSeconds = Math.floor((currentTime - startTime) / 1000);
+        if (submission.exam_started_at) {
+            const startTime = new Date(submission.exam_started_at).getTime();
+            const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+            const totalSeconds = submission.duration_minutes * 60;
 
-            let durationMinutes = existingSubmission.duration_minutes;
-            if (!durationMinutes) {
-                const exam = await get(`
-                    SELECT duration_minutes FROM exams WHERE subject = ? AND class = ?
-                `, [subject, student.class]);
-                durationMinutes = exam ? exam.duration_minutes : 60;
-            }
-
-            const totalSeconds = durationMinutes * 60;
-
-            if (elapsedSeconds > totalSeconds + 60) {
-                return res.status(403).json({
-                    error: 'Exam time has expired.',
+            if (elapsedSeconds > totalSeconds) {
+                return res.status(400).json({
+                    error: 'Time expired. Cannot save progress.',
                     timeExpired: true
                 });
             }
         }
 
-        // ✅ Save answers (without scoring or marking as submitted)
-        await run(`
-            UPDATE submissions 
-            SET answers = ?
-            WHERE id = ?
-        `, [JSON.stringify(answers), existingSubmission.id]);
+        await run(
+            'UPDATE submissions SET answers = ? WHERE student_id = ? AND subject = ?',
+            [JSON.stringify(answers), student.id, subject]
+        );
 
         console.log(`💾 Auto-saved ${Object.keys(answers).length} answers for ${exam_code} - ${subject}`);
 
         res.json({
             success: true,
-            message: 'Progress saved',
-            saved_count: Object.keys(answers).length
+            saved: Object.keys(answers).length,
+            message: 'Progress saved successfully'
         });
+
     } catch (error) {
         console.error('❌ saveExamProgress error:', error);
-        res.status(500).json({
-            error: 'Failed to save progress.'
-        });
+        res.status(500).json({ error: 'Failed to save progress. Your answers may not be saved.' });
     }
 }
 
-/**
- * Submit exam answers (FINAL submission)
- */
 async function submitExam(req, res) {
-    const { exam_code, answers, subject } = req.body;
-
-    if (!exam_code || !answers || !subject) {
-        return res.status(400).json({
-            error: 'Missing required information. Please try again.'
-        });
-    }
-
     try {
-        const student = await get(`
-            SELECT s.id, s.class 
-            FROM students s
-            WHERE s.exam_code = ?
-        `, [exam_code]);
+        const { exam_code, subject, answers } = req.body;
 
+        console.log('📤 submitExam:', { exam_code, subject, answerCount: Object.keys(answers || {}).length });
+
+        if (!exam_code || !subject || !answers) {
+            return res.status(400).json({ error: 'Exam code, subject, and answers are required' });
+        }
+
+        const student = await get('SELECT * FROM students WHERE exam_code = ?', [exam_code]);
         if (!student) {
-            return res.status(403).json({
-                error: 'Invalid exam code.'
-            });
+            return res.status(404).json({ error: 'Student not found with this exam code' });
         }
 
-        const existingSubmission = await get(`
-            SELECT id, answers, exam_started_at, duration_minutes, submitted_at
-            FROM submissions
-            WHERE student_id = ? AND subject = ?
-        `, [student.id, subject]);
+        const submission = await get(
+            'SELECT * FROM submissions WHERE student_id = ? AND subject = ?',
+            [student.id, subject]
+        );
 
-        if (!existingSubmission) {
-            return res.status(403).json({
-                error: 'No active exam session found. Please start the exam first.'
-            });
+        if (!submission) {
+            return res.status(400).json({ error: 'No exam session found. Please start the exam first.' });
         }
 
-        // Check if already submitted
-        if (existingSubmission.submitted_at !== null) {
-            return res.status(403).json({
-                error: 'You have already submitted this exam.'
-            });
+        if (submission.submitted_at) {
+            return res.status(400).json({ error: 'Exam already submitted. You cannot submit twice.' });
         }
 
-        // Verify time hasn't expired (with 60 second grace period)
-        if (existingSubmission.exam_started_at) {
-            const startTime = new Date(existingSubmission.exam_started_at).getTime();
-            const currentTime = Date.now();
-            const elapsedSeconds = Math.floor((currentTime - startTime) / 1000);
+        if (submission.exam_started_at) {
+            const startTime = new Date(submission.exam_started_at).getTime();
+            const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+            const totalSeconds = submission.duration_minutes * 60;
 
-            let durationMinutes = existingSubmission.duration_minutes;
-            if (!durationMinutes) {
-                const exam = await get(`
-                    SELECT duration_minutes FROM exams WHERE subject = ? AND class = ?
-                `, [subject, student.class]);
-                durationMinutes = exam ? exam.duration_minutes : 60;
-            }
-
-            const totalSeconds = durationMinutes * 60;
-            const gracePeriod = 60;
-
-            if (elapsedSeconds > totalSeconds + gracePeriod) {
-                console.log(`⏰ Late submission rejected for ${exam_code}:`);
-                console.log(`   Elapsed: ${elapsedSeconds}s`);
-                console.log(`   Allowed: ${totalSeconds + gracePeriod}s`);
-                return res.status(403).json({
-                    error: 'Exam time has expired. Late submission not allowed.',
+            if (elapsedSeconds > totalSeconds + 60) {
+                return res.status(400).json({
+                    error: 'Time has expired. Your answers have been auto-saved.',
                     timeExpired: true
                 });
             }
         }
 
+        // ✅ FIXED: Use getCorrectAnswers like the original
         const correctAnswers = await getCorrectAnswers(subject, student.class);
 
         if (!correctAnswers || Object.keys(correctAnswers).length === 0) {
@@ -453,64 +354,66 @@ async function submitExam(req, res) {
             });
         }
 
+        // ✅ FIXED: Use gradeExam with correct signature
         const score = gradeExam(answers, correctAnswers);
         const total = Object.keys(correctAnswers).length;
         const percentage = Math.round((score / total) * 100);
 
-        // ✅ UPDATE with final score and mark as submitted
-        await run(`
-            UPDATE submissions 
-            SET answers = ?,
-                score = ?,
-                total_questions = ?,
-                submitted_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        `, [JSON.stringify(answers), score, total, existingSubmission.id]);
+        await run(
+            `UPDATE submissions
+             SET answers = ?, score = ?, total_questions = ?, submitted_at = CURRENT_TIMESTAMP
+             WHERE student_id = ? AND subject = ?`,
+            [JSON.stringify(answers), score, total, student.id, subject]
+        );
 
-        console.log(`✅ Exam submitted for ${exam_code} - ${subject}:`);
-        console.log(`   Score: ${score}/${total} (${percentage}%)`);
-
+        // ✅ Log audit
         await logAudit({
             action: ACTIONS.EXAM_SUBMITTED,
             userType: 'student',
             userIdentifier: exam_code,
-            details: `Submitted ${subject} - Score: ${score}/${total} (${percentage}%)`,
+            details: `Submitted ${subject} exam: ${score}/${total} (${percentage}%)`,
+            ipAddress: getClientIp(req),
             status: 'success',
             metadata: {
-                studentId: student.id,
                 subject,
                 score,
                 total,
-                percentage
+                percentage,
+                answeredCount: Object.keys(answers).length
             }
         });
 
-        res.json({
+        console.log(`✅ Exam submitted: ${exam_code} - ${subject}: ${score}/${total} (${percentage}%)`);
+
+        // ✅ NEW: Check settings for showing results
+        const settings = await getSettings();
+
+        const response = {
             success: true,
-            score,
-            total,
-            percentage,
-            message: `Exam submitted successfully! You scored ${score} out of ${total} (${percentage}%)`
-        });
+            message: 'Exam submitted successfully'
+        };
+
+        // Only include score if setting is enabled
+        if (settings.showResults) {
+            response.score = score;
+            response.total = total;
+            response.percentage = percentage;
+            console.log(`✅ Results shown to student (setting enabled)`);
+        } else {
+            console.log(`✅ Results hidden from student (setting disabled)`);
+        }
+
+        res.json(response);
+
     } catch (error) {
         console.error('❌ submitExam error:', error);
-        await logAudit({
-            action: ACTIONS.EXAM_SUBMISSION_FAILED,
-            userType: 'student',
-            userIdentifier: exam_code || 'unknown',
-            details: 'Submission failed due to system error',
-            status: 'failure',
-            metadata: { error: error.message }
-        });
-        res.status(500).json({
-            error: 'Failed to submit exam. Please try again or contact your administrator.'
-        });
+        res.status(500).json({ error: 'Failed to submit exam. Please try again or contact your administrator.' });
     }
 }
 
 module.exports = {
     studentLogin,
     getExamQuestions,
-    saveExamProgress, // ✅ NEW: Export auto-save function
+    saveExamProgress,
     submitExam
 };

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { studentLogin } from '../../services/api';
+import { useState, useEffect } from 'react';
+import { studentLogin, getSystemSettings } from '../../services/api';
 import { useNavigate } from 'react-router-dom';
 import { GraduationCap, Lock, User, AlertCircle, Loader2 } from 'lucide-react';
 
@@ -8,7 +8,22 @@ export default function StudentLogin() {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [settings, setSettings] = useState(null);
     const navigate = useNavigate();
+
+    // ✅ Load settings on mount
+    useEffect(() => {
+        const loadSettings = async () => {
+            try {
+                const res = await getSystemSettings();
+                setSettings(res.data.settings);
+                console.log('⚙️ Settings loaded:', res.data.settings);
+            } catch (error) {
+                console.error('Failed to load settings:', error);
+            }
+        };
+        loadSettings();
+    }, []);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -18,31 +33,25 @@ export default function StudentLogin() {
         try {
             const res = await studentLogin({ exam_code: examCode, password });
 
-            // ✅ FIXED: Proper handling of active_exams with fallback
             const activeExams = res.data.active_exams || [];
 
-            // Store in localStorage
             localStorage.setItem('examCode', examCode);
             localStorage.setItem('studentName', res.data.full_name || 'Student');
             localStorage.setItem('studentClass', res.data.class || '');
 
-            // ✅ FIXED: Only store if activeExams exists and is an array
             if (Array.isArray(activeExams) && activeExams.length > 0) {
                 localStorage.setItem('activeExams', JSON.stringify(activeExams));
             } else {
-                localStorage.removeItem('activeExams'); // Clear any old data
+                localStorage.removeItem('activeExams');
             }
 
-            // Navigate to exam selection
             navigate('/exam-select');
         } catch (err) {
-            // ✅ FIXED: Better error message handling with user-friendly defaults
             const errorMessage = err.response?.data?.error ||
                 err.message ||
                 'Login failed. Please check your credentials and try again.';
             setError(errorMessage);
 
-            // Clear localStorage on error
             localStorage.removeItem('examCode');
             localStorage.removeItem('studentName');
             localStorage.removeItem('activeExams');
@@ -61,11 +70,16 @@ export default function StudentLogin() {
                     </div>
                 </div>
                 <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-                    CBT Exam System
+                    {settings?.schoolName || 'CBT Exam System'}
                 </h2>
                 <p className="mt-2 text-center text-sm text-gray-600">
-                    Enter your credentials to access your exam
+                    {settings?.systemName || 'Enter your credentials to access your exam'}
                 </p>
+                {settings?.academicSession && (
+                    <p className="mt-1 text-center text-xs text-gray-500">
+                        {settings.academicSession} • {settings.currentTerm}
+                    </p>
+                )}
             </div>
 
             {/* Login Form */}
@@ -172,75 +186,74 @@ export default function StudentLogin() {
                 </div>
             </div>
 
-            {/* ✅ ADDED: Inline styles to ensure colors work even if Tailwind fails */}
+            {/* Inline styles to ensure colors work */}
             <style jsx>{`
                 .animate-shake {
                     animation: shake 0.5s;
                 }
-                
+
                 @keyframes shake {
                     0%, 100% { transform: translateX(0); }
                     10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
                     20%, 40%, 60%, 80% { transform: translateX(5px); }
                 }
-                
-                /* Fallback colors if Tailwind doesn't load */
+
                 .bg-blue-600 {
                     background-color: #2563eb !important;
                 }
-                
+
                 .bg-blue-700 {
                     background-color: #1d4ed8 !important;
                 }
-                
+
                 .text-blue-600 {
                     color: #2563eb !important;
                 }
-                
+
                 .text-red-700 {
                     color: #b91c1c !important;
                 }
-                
+
                 .bg-red-50 {
                     background-color: #fef2f2 !important;
                 }
-                
+
                 .border-red-500 {
                     border-color: #ef4444 !important;
                 }
-                
+
                 .text-red-500 {
                     color: #ef4444 !important;
                 }
-                
+
                 .text-gray-900 {
                     color: #111827 !important;
                 }
-                
+
                 .text-gray-700 {
                     color: #374151 !important;
                 }
-                
+
                 .text-gray-600 {
                     color: #4b5563 !important;
                 }
-                
+
                 .text-gray-500 {
                     color: #6b7280 !important;
                 }
-                
+
                 .text-gray-400 {
                     color: #9ca3af !important;
                 }
-                
+
                 .bg-white {
                     background-color: #ffffff !important;
                 }
-                
+
                 .border-gray-300 {
                     border-color: #d1d5db !important;
                 }
-                
+
                 .border-gray-100 {
                     border-color: #f3f4f6 !important;
                 }

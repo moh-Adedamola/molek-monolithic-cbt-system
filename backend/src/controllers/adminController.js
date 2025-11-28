@@ -4,6 +4,7 @@ const { generatePassword, generateExamCode } = require('../services/codeGenerato
 const { parseCsvBuffer } = require('../services/csvService');
 // ✅ FIXED: Added getAuditLogs and getAuditStats to imports
 const { logAudit, ACTIONS, getAuditLogs, getAuditStats } = require('../services/auditService');
+const {getSettings} = require("../services/settingsService");
 
 
 function getClientIp(req) {
@@ -723,6 +724,9 @@ async function exportClassResultsAsText(req, res) {
             });
         }
 
+        // ✅ ADDED: Get settings for session/term
+        const settings = await getSettings();
+
         const results = await all(`
             SELECT
                 s.first_name,
@@ -738,10 +742,14 @@ async function exportClassResultsAsText(req, res) {
             ORDER BY sub.score DESC, s.last_name, s.first_name
         `, [classLevel, subject]);
 
-        // Generate text report
+        // ✅ UPDATED: Generate text report with session/term
         let text = '==========================================================\n';
         text += '                    EXAM RESULTS REPORT\n';
         text += '==========================================================\n';
+        text += `School: ${settings.schoolName}\n`;
+        text += `System: ${settings.systemName}\n`;
+        text += `Academic Session: ${settings.academicSession}\n`;
+        text += `Term: ${settings.currentTerm}\n`;
         text += `Class: ${classLevel}\n`;
         text += `Subject: ${subject}\n`;
         text += `Generated: ${new Date().toLocaleString()}\n`;
@@ -753,21 +761,30 @@ async function exportClassResultsAsText(req, res) {
             results.forEach((r, index) => {
                 const fullName = `${r.first_name} ${r.middle_name || ''} ${r.last_name}`.trim();
                 const percentage = Math.round((r.score / r.total_questions) * 100);
+                // ✅ ADDED: Calculate grade
+                const grade = percentage >= 70 ? 'A' :
+                    percentage >= 60 ? 'B' :
+                        percentage >= 50 ? 'C' :
+                            percentage >= 40 ? 'D' : 'F';
 
                 text += `${index + 1}. ${fullName}\n`;
                 text += `   Exam Code: ${r.exam_code}\n`;
                 text += `   Score: ${r.score}/${r.total_questions} (${percentage}%)\n`;
+                text += `   Grade: ${grade}\n`; // ✅ ADDED
                 text += `   Submitted: ${new Date(r.submitted_at).toLocaleString()}\n`;
                 text += '\n';
             });
 
-            // Summary
+            // ✅ UPDATED: Summary with excellence rate
             const totalStudents = results.length;
             const averageScore = Math.round(
                 results.reduce((sum, r) => sum + (r.score / r.total_questions * 100), 0) / totalStudents
             );
             const passCount = results.filter(r => (r.score / r.total_questions * 100) >= 50).length;
             const passRate = Math.round((passCount / totalStudents) * 100);
+            // ✅ ADDED: Excellence rate calculation
+            const excellenceCount = results.filter(r => (r.score / r.total_questions * 100) >= 70).length;
+            const excellenceRate = Math.round((excellenceCount / totalStudents) * 100);
 
             text += '\n==========================================================\n';
             text += '                        SUMMARY\n';
@@ -776,6 +793,8 @@ async function exportClassResultsAsText(req, res) {
             text += `Average Score: ${averageScore}%\n`;
             text += `Pass Rate: ${passRate}% (≥50%)\n`;
             text += `Passed: ${passCount}/${totalStudents}\n`;
+            text += `Excellence Rate: ${excellenceRate}% (≥70%)\n`; // ✅ ADDED
+            text += `Excellent: ${excellenceCount}/${totalStudents}\n`; // ✅ ADDED
             text += '==========================================================\n';
         }
 

@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom";
+import { useState, useEffect } from "react";
 import {
     LayoutDashboard,
     GraduationCap,
@@ -15,8 +16,25 @@ import {
     X,
 } from "lucide-react";
 import clsx from "clsx";
+import { getSystemSettings } from "../../services/api";
 
 const Sidebar = ({ isOpen, setIsOpen }) => {
+    // ✅ Settings state
+    const [settings, setSettings] = useState(null);
+
+    // ✅ Load settings on mount
+    useEffect(() => {
+        const loadSettings = async () => {
+            try {
+                const res = await getSystemSettings();
+                setSettings(res.data.settings);
+            } catch (error) {
+                console.error('Failed to load settings:', error);
+            }
+        };
+        loadSettings();
+    }, []);
+
     const navigationItems = [
         { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, path: "/admin" },
         { id: "archive", label: "Archive Management", icon: Archive, path: "/admin/archive" },
@@ -57,10 +75,21 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
                 {/* Header */}
                 <div className="flex items-center justify-between border-b px-6 py-4">
                     <div className="flex items-center gap-3">
-                        {/*<div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-blue-700 text-white shadow-md">*/}
-                        {/*    <span className="text-lg font-bold">M</span>*/}
-                        {/*</div>*/}
-                        <span className="text-xl font-bold text-gray-800">Molek CBT</span>
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-blue-700 text-white shadow-md">
+                            <span className="text-lg font-bold">
+                                {(settings?.schoolName || 'Molek CBT').charAt(0).toUpperCase()}
+                            </span>
+                        </div>
+                        <div className="flex flex-col">
+                            <span className="text-lg font-bold text-gray-800">
+                                {settings?.schoolName || 'Molek CBT'}
+                            </span>
+                            {settings?.academicSession && (
+                                <span className="text-xs text-gray-500">
+                                    {settings.academicSession} • {settings.currentTerm}
+                                </span>
+                            )}
+                        </div>
                     </div>
 
                     {/* Close button - Only visible on mobile */}
@@ -106,7 +135,7 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
                     </div>
                 </nav>
 
-                {/* Footer - Optional */}
+                {/* Footer */}
                 <div className="border-t px-6 py-4">
                     <div className="flex items-center gap-3">
                         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100">
@@ -114,7 +143,9 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
                         </div>
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-gray-900 truncate">Admin</p>
-                            <p className="text-xs text-gray-500 truncate">admin@molek.com</p>
+                            <p className="text-xs text-gray-500 truncate">
+                                {settings?.systemName || 'Molek CBT System'}
+                            </p>
                         </div>
                     </div>
                 </div>

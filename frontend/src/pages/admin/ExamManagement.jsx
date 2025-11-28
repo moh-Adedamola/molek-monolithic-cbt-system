@@ -9,7 +9,7 @@ import Badge from '../../components/common/Badge';
 import Alert from '../../components/common/Alert';
 import ConfirmDialog from '../../components/common/ConfirmDialog';
 import Card from '../../components/common/Card';
-import { getAllExams, getExamById, updateExam, deleteExam, activateExam, getSubjects } from '../../services/api';
+import { getAllExams, getExamById, updateExam, deleteExam, activateExam, getSubjects, getSystemSettings } from '../../services/api';
 
 const CLASS_LEVELS = ['JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3'];
 
@@ -30,11 +30,23 @@ const ExamManagement = () => {
         duration_minutes: 60
     });
     const [submitting, setSubmitting] = useState(false);
+    const [settings, setSettings] = useState(null);
 
     useEffect(() => {
+        loadSettings();
         loadExams();
         loadSubjects();
     }, []);
+
+    const loadSettings = async () => {
+        try {
+            const res = await getSystemSettings();
+            setSettings(res.data.settings);
+            console.log('⚙️ Settings loaded - default duration:', res.data.settings.defaultExamDuration);
+        } catch (error) {
+            console.error('Failed to load settings:', error);
+        }
+    };
 
     const loadExams = async () => {
         try {
@@ -72,8 +84,9 @@ const ExamManagement = () => {
 
     const handleEditClick = (exam) => {
         setSelectedExam(exam);
+        const defaultDuration = settings?.defaultExamDuration || 60;
         setFormData({
-            duration_minutes: exam.duration_minutes || 60
+            duration_minutes: exam.duration_minutes || defaultDuration
         });
         setIsEditModalOpen(true);
     };
@@ -160,7 +173,7 @@ const ExamManagement = () => {
             ),
         },
         {
-            key: 'question_count',  // ✅ FIXED: Changed from total_questions to question_count
+            key: 'question_count',
             label: 'Questions',
             render: (value) => (
                 <span className="text-gray-600">{value || 0}</span>
@@ -272,6 +285,11 @@ const ExamManagement = () => {
                         onChange={(e) => setFormData({ ...formData, duration_minutes: parseInt(e.target.value) })}
                         required
                     />
+                    {settings?.defaultExamDuration && (
+                        <p className="text-xs text-gray-500 mt-1">
+                            Default duration: {settings.defaultExamDuration} minutes (can be changed in System Settings)
+                        </p>
+                    )}
                     <div className="flex justify-end gap-3 pt-4">
                         <Button
                             type="button"
