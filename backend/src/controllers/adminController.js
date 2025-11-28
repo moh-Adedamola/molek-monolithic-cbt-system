@@ -629,45 +629,98 @@ async function getSubjects(req, res) {
 }
 
 // ============================================
-// RESULTS
+// RESULTS - FIXED VERSION
 // ============================================
 
+/**
+ * Get class results - FIXED to work with or without subject
+ * Can filter by:
+ * - Just class: ?class=JSS3
+ * - Class + subject: ?class=JSS3&subject=Mathematics
+ */
 async function getClassResults(req, res) {
     try {
         const { class: classLevel, subject } = req.query;
 
-        if (!classLevel || !subject) {
-            return res.status(400).json({ error: 'class and subject required' });
+        console.log('📊 Get Class Results Request:', { classLevel, subject });
+
+        // ✅ FIXED: Only class is required, subject is optional
+        if (!classLevel) {
+            return res.status(400).json({ error: 'class is required' });
         }
 
-        const results = await all(`
-            SELECT
-                s.first_name,
-                s.middle_name,
-                s.last_name,
-                s.exam_code,
-                sub.score,
-                sub.total_questions,
-                sub.submitted_at
-            FROM submissions sub
-                     JOIN students s ON sub.student_id = s.id
-            WHERE s.class = ? AND sub.subject = ?
-            ORDER BY sub.score DESC, s.last_name, s.first_name
-        `, [classLevel, subject]);
+        let query;
+        let params;
 
-        res.json({ results });
+        if (subject) {
+            // Filter by both class and subject
+            query = `
+                SELECT
+                    s.first_name,
+                    s.middle_name,
+                    s.last_name,
+                    s.exam_code,
+                    sub.subject,
+                    sub.score,
+                    sub.total_questions,
+                    sub.submitted_at
+                FROM submissions sub
+                JOIN students s ON sub.student_id = s.id
+                WHERE s.class = ? AND sub.subject = ?
+                ORDER BY sub.subject, sub.score DESC, s.last_name, s.first_name
+            `;
+            params = [classLevel, subject];
+        } else {
+            // Filter by class only - return all subjects
+            query = `
+                SELECT
+                    s.first_name,
+                    s.middle_name,
+                    s.last_name,
+                    s.exam_code,
+                    sub.subject,
+                    sub.score,
+                    sub.total_questions,
+                    sub.submitted_at
+                FROM submissions sub
+                JOIN students s ON sub.student_id = s.id
+                WHERE s.class = ?
+                ORDER BY sub.subject, sub.score DESC, s.last_name, s.first_name
+            `;
+            params = [classLevel];
+        }
+
+        const results = await all(query, params);
+
+        console.log(`✅ Found ${results.length} results for ${classLevel}${subject ? ' - ' + subject : ''}`);
+
+        res.json({
+            success: true,
+            results,
+            count: results.length,
+            class: classLevel,
+            subject: subject || 'All Subjects'
+        });
     } catch (error) {
-        console.error('Get class results error:', error);
+        console.error('❌ Get class results error:', error);
         res.status(500).json({ error: 'Failed to get class results' });
     }
 }
 
+/**
+ * Export class results as text file
+ * Requires both class and subject
+ */
 async function exportClassResultsAsText(req, res) {
     try {
         const { class: classLevel, subject } = req.query;
 
+        console.log('📤 Export Text Request:', { classLevel, subject });
+
         if (!classLevel || !subject) {
-            return res.status(400).json({ error: 'class and subject required' });
+            return res.status(400).json({
+                error: 'Both class and subject are required for text export'
+            });
         }
 
         const results = await all(`
@@ -685,44 +738,73 @@ async function exportClassResultsAsText(req, res) {
             ORDER BY sub.score DESC, s.last_name, s.first_name
         `, [classLevel, subject]);
 
+        // Generate text report
         let text = '==========================================================\n';
         text += '                    EXAM RESULTS REPORT\n';
         text += '==========================================================\n';
-        text += `CLASS: ${classLevel}\n`;
-        text += `SUBJECT: ${subject}\n`;
-        text += `TOTAL STUDENTS: ${results.length}\n`;
+        text += `Class: ${classLevel}\n`;
+        text += `Subject: ${subject}\n`;
+        text += `Generated: ${new Date().toLocaleString()}\n`;
         text += '==========================================================\n\n';
 
-        results.forEach((r, i) => {
-            const fullName = `${r.first_name} ${r.middle_name ? r.middle_name + ' ' : ''}${r.last_name}`;
-            const percentage = Math.round((r.score / r.total_questions) * 100);
+        if (results.length === 0) {
+            text += 'No results found.\n';
+        } else {
+            results.forEach((r, index) => {
+                const fullName = `${r.first_name} ${r.middle_name || ''} ${r.last_name}`.trim();
+                const percentage = Math.round((r.score / r.total_questions) * 100);
 
-            text += `${i + 1}. ${fullName}\n`;
-            text += `   Exam Code: ${r.exam_code}\n`;
-            text += `   Score: ${r.score}/${r.total_questions} (${percentage}%)\n`;
-            text += `   Submitted: ${new Date(r.submitted_at).toLocaleString()}\n\n`;
-        });
+                text += `${index + 1}. ${fullName}\n`;
+                text += `   Exam Code: ${r.exam_code}\n`;
+                text += `   Score: ${r.score}/${r.total_questions} (${percentage}%)\n`;
+                text += `   Submitted: ${new Date(r.submitted_at).toLocaleString()}\n`;
+                text += '\n';
+            });
+
+            // Summary
+            const totalStudents = results.length;
+            const averageScore = Math.round(
+                results.reduce((sum, r) => sum + (r.score / r.total_questions * 100), 0) / totalStudents
+            );
+            const passCount = results.filter(r => (r.score / r.total_questions * 100) >= 50).length;
+            const passRate = Math.round((passCount / totalStudents) * 100);
+
+            text += '\n==========================================================\n';
+            text += '                        SUMMARY\n';
+            text += '==========================================================\n';
+            text += `Total Students: ${totalStudents}\n`;
+            text += `Average Score: ${averageScore}%\n`;
+            text += `Pass Rate: ${passRate}% (≥50%)\n`;
+            text += `Passed: ${passCount}/${totalStudents}\n`;
+            text += '==========================================================\n';
+        }
 
         res.setHeader('Content-Type', 'text/plain');
-        res.setHeader('Content-Disposition', `attachment; filename=${classLevel}_${subject}_results.txt`);
+        res.setHeader('Content-Disposition', `attachment; filename="${classLevel}_${subject}_results.txt"`);
         res.send(text);
     } catch (error) {
-        console.error('Export results error:', error);
+        console.error('❌ Export text error:', error);
         res.status(500).json({ error: 'Failed to export results' });
     }
 }
 
+/**
+ * Get filtered results (for CSV export)
+ * More flexible - can filter by class, subject, or both
+ */
 async function getFilteredResults(req, res) {
     try {
-        const { class: classLevel, subject, from_date, to_date } = req.query;
+        const { class: classLevel, subject } = req.body;
+
+        console.log('📊 Filtered Results Request:', { classLevel, subject });
 
         let query = `
             SELECT
                 s.first_name,
                 s.middle_name,
                 s.last_name,
-                s.class,
                 s.exam_code,
+                s.class,
                 sub.subject,
                 sub.score,
                 sub.total_questions,
@@ -743,34 +825,26 @@ async function getFilteredResults(req, res) {
             params.push(subject);
         }
 
-        if (from_date) {
-            query += ' AND sub.submitted_at >= ?';
-            params.push(from_date);
-        }
-
-        if (to_date) {
-            query += ' AND sub.submitted_at <= ?';
-            params.push(to_date);
-        }
-
-        query += ' ORDER BY sub.submitted_at DESC';
+        query += ' ORDER BY s.class, sub.subject, sub.score DESC';
 
         const results = await all(query, params);
 
         // Generate CSV
-        const csvHeader = 'first_name,middle_name,last_name,class,exam_code,subject,score,total_questions,percentage,submitted_at\n';
-        const csvRows = results.map(r => {
-            const percentage = Math.round((r.score / r.total_questions) * 100);
-            return `${r.first_name},${r.middle_name || ''},${r.last_name},${r.class},${r.exam_code},${r.subject},${r.score},${r.total_questions},${percentage},${r.submitted_at}`;
-        }).join('\n');
+        let csv = 'Name,Exam Code,Class,Subject,Score,Total,Percentage,Grade,Submitted\n';
 
-        const csv = csvHeader + csvRows;
+        results.forEach(r => {
+            const fullName = `${r.first_name} ${r.middle_name || ''} ${r.last_name}`.trim();
+            const percentage = Math.round((r.score / r.total_questions) * 100);
+            const grade = percentage >= 70 ? 'A' : percentage >= 60 ? 'B' : percentage >= 50 ? 'C' : percentage >= 40 ? 'D' : 'F';
+
+            csv += `"${fullName}","${r.exam_code}","${r.class}","${r.subject}",${r.score},${r.total_questions},${percentage}%,${grade},"${new Date(r.submitted_at).toLocaleString()}"\n`;
+        });
 
         res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', 'attachment; filename=filtered_results.csv');
+        res.setHeader('Content-Disposition', 'attachment; filename="filtered_results.csv"');
         res.send(csv);
     } catch (error) {
-        console.error('Filtered results error:', error);
+        console.error('❌ Get filtered results error:', error);
         res.status(500).json({ error: 'Failed to get filtered results' });
     }
 }

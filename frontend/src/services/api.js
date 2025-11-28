@@ -56,8 +56,11 @@ export const getSubjects = () => API.get('/admin/subjects');
 // ============================================
 // ADMIN: RESULTS
 // ============================================
-export const getClassResults = (classLevel) =>
-    API.get('/admin/results/class', { params: { class: classLevel } });
+export const getClassResults = (classLevel, subject = null) => {
+    const params = { class: classLevel };
+    if (subject) params.subject = subject;
+    return API.get('/admin/results/class', { params });
+}
 export const exportClassResultsAsText = (classLevel, subject) => {
     return API.get(`/admin/results/export?class=${encodeURIComponent(classLevel)}&subject=${encodeURIComponent(subject)}`, {
         responseType: 'blob'

@@ -26,8 +26,8 @@ const Sidebar = ({ isOpen, setIsOpen }) => {
         { id: "questions", label: "Question Bank", icon: FileQuestion, path: "/admin/questions" },
         { id: "exams", label: "Exam Management", icon: ClipboardList, path: "/admin/exams" },
         { id: "monitoring", label: "Live Monitoring", icon: Activity, path: "/admin/monitoring" },
-        { id: "results", label: "Results Management", icon: FileText, path: "/admin/results" },
-        { id: "reports", label: "Reports & Analytics", icon: TrendingUp, path: "/admin/reports" },
+        // { id: "results", label: "Results Management", icon: FileText, path: "/admin/results" },
+        { id: "reports", label: "Results & Analytics", icon: TrendingUp, path: "/admin/reports" },
         { id: "audit", label: "Audit Logs", icon: Shield, path: "/admin/audit-logs" },
         { id: "settings", label: "System Settings", icon: Settings, path: "/admin/settings" },
     ];

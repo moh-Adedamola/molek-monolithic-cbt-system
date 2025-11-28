@@ -10,7 +10,7 @@ import ExamScreen from "./pages/student/ExamScreen";
 import AdminDashboard from "./pages/admin/Dashboard";
 import StudentManagement from "./pages/admin/StudentManagement";
 import QuestionBank from "./pages/admin/QuestionBank";
-import ResultsManagement from "./pages/admin/ResultsManagement";
+// import ResultsManagement from "./pages/admin/ResultsManagement";
 import ExamManagement from "./pages/admin/ExamManagement";
 import CreateExam from "./pages/admin/CreateExam";
 import EditExam from "./pages/admin/EditExam";
@@ -18,7 +18,7 @@ import ViewExam from "./pages/admin/ViewExam";
 import SubjectManagement from "./pages/admin/SubjectManagement";
 import UserManagement from "./pages/admin/UserManagement";
 import ExamMonitoring from "./pages/admin/ExamMonitoring";
-import Reports from "./pages/admin/Reports";
+import ResultsAndAnalytics from "./pages/admin/Reports";
 import AuditLogs from "./pages/admin/AuditLogs";
 import ArchiveManagement from "./pages/admin/ArchiveManagement";
 import NetworkInfo from "./pages/admin/NetworkInfo";
@@ -38,7 +38,7 @@ const Router = () => {
 
                 <Route path="students" element={<StudentManagement />} />
                 <Route path="questions" element={<QuestionBank />} />
-                <Route path="results" element={<ResultsManagement />} />
+                {/*<Route path="results" element={<ResultsManagement />} />*/}
 
                 <Route path="exams" element={<ExamManagement />} />
                 <Route path="exams/create" element={<CreateExam />} />
@@ -48,7 +48,7 @@ const Router = () => {
                 <Route path="subjects" element={<SubjectManagement />} />
                 <Route path="users" element={<UserManagement />} />
                 <Route path="monitoring" element={<ExamMonitoring />} />
-                <Route path="reports" element={<Reports />} />
+                <Route path="reports" element={<ResultsAndAnalytics />} />
                 <Route path="audit-logs" element={<AuditLogs />} />
                 <Route path="settings" element={<SystemSettings />} />
                 <Route path="archive" element={<ArchiveManagement />} />
