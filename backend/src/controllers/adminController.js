@@ -622,7 +622,7 @@ async function getSubjects(req, res) {
 
         console.log('📚 Subjects grouped by class:', subjectsByClass);
 
-        res.json({ subjectsByClass });
+        res.json({ subjects: subjectsByClass });
     } catch (error) {
         console.error('❌ getSubjects error:', error);
         res.status(500).json({ error: 'Failed to get subjects' });
@@ -643,42 +643,42 @@ async function getClassResults(req, res) {
     try {
         const { class: classLevel, subject } = req.query;
 
-        console.log('📊 Get Class Results Request:', { classLevel, subject });
-
-        // ✅ FIXED: Only class is required, subject is optional
-        if (!classLevel) {
-            return res.status(400).json({ error: 'class is required' });
-        }
+        console.log('📊 Get Results Request:', { classLevel, subject });
 
         let query;
-        let params;
+        let params = [];
+        let filterDescription = '';
 
-        if (subject) {
-            // Filter by both class and subject
+        if (classLevel && subject) {
+            // ✅ FILTER 1: Both class AND subject
             query = `
                 SELECT
                     s.first_name,
                     s.middle_name,
                     s.last_name,
                     s.exam_code,
+                    s.class,
                     sub.subject,
                     sub.score,
                     sub.total_questions,
                     sub.submitted_at
                 FROM submissions sub
-                JOIN students s ON sub.student_id = s.id
+                         JOIN students s ON sub.student_id = s.id
                 WHERE s.class = ? AND sub.subject = ?
-                ORDER BY sub.subject, sub.score DESC, s.last_name, s.first_name
+                ORDER BY sub.score DESC, s.last_name, s.first_name
             `;
             params = [classLevel, subject];
-        } else {
-            // Filter by class only - return all subjects
+            filterDescription = `${classLevel} - ${subject}`;
+
+        } else if (classLevel && !subject) {
+            // ✅ FILTER 2: Class only (all subjects in that class)
             query = `
                 SELECT
                     s.first_name,
                     s.middle_name,
                     s.last_name,
                     s.exam_code,
+                    s.class,
                     sub.subject,
                     sub.score,
                     sub.total_questions,
@@ -689,22 +689,65 @@ async function getClassResults(req, res) {
                 ORDER BY sub.subject, sub.score DESC, s.last_name, s.first_name
             `;
             params = [classLevel];
+            filterDescription = `${classLevel} (All Subjects)`;
+
+        } else if (!classLevel && subject) {
+            // ✅ FILTER 3: Subject only (all classes taking that subject)
+            query = `
+                SELECT
+                    s.first_name,
+                    s.middle_name,
+                    s.last_name,
+                    s.exam_code,
+                    s.class,
+                    sub.subject,
+                    sub.score,
+                    sub.total_questions,
+                    sub.submitted_at
+                FROM submissions sub
+                JOIN students s ON sub.student_id = s.id
+                WHERE sub.subject = ?
+                ORDER BY s.class, sub.score DESC, s.last_name, s.first_name
+            `;
+            params = [subject];
+            filterDescription = `${subject} (All Classes)`;
+
+        } else {
+            // ✅ FILTER 4: No filters (all results)
+            query = `
+                SELECT
+                    s.first_name,
+                    s.middle_name,
+                    s.last_name,
+                    s.exam_code,
+                    s.class,
+                    sub.subject,
+                    sub.score,
+                    sub.total_questions,
+                    sub.submitted_at
+                FROM submissions sub
+                JOIN students s ON sub.student_id = s.id
+                ORDER BY s.class, sub.subject, sub.score DESC, s.last_name, s.first_name
+            `;
+            params = [];
+            filterDescription = 'All Results';
         }
 
         const results = await all(query, params);
 
-        console.log(`✅ Found ${results.length} results for ${classLevel}${subject ? ' - ' + subject : ''}`);
+        console.log(`✅ Found ${results.length} results for: ${filterDescription}`);
 
         res.json({
             success: true,
             results,
             count: results.length,
-            class: classLevel,
-            subject: subject || 'All Subjects'
+            class: classLevel || 'All Classes',
+            subject: subject || 'All Subjects',
+            filterDescription
         });
     } catch (error) {
-        console.error('❌ Get class results error:', error);
-        res.status(500).json({ error: 'Failed to get class results' });
+        console.error('❌ Get results error:', error);
+        res.status(500).json({ error: 'Failed to get results' });
     }
 }
 

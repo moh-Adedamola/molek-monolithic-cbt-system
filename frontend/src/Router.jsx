@@ -18,7 +18,7 @@ import ViewExam from "./pages/admin/ViewExam";
 import SubjectManagement from "./pages/admin/SubjectManagement";
 import UserManagement from "./pages/admin/UserManagement";
 import ExamMonitoring from "./pages/admin/ExamMonitoring";
-import ResultsAndAnalytics from "./pages/admin/Reports";
+import ResultsAndAnalytics from "./pages/admin/ResultsAndAnalytics";
 import AuditLogs from "./pages/admin/AuditLogs";
 import ArchiveManagement from "./pages/admin/ArchiveManagement";
 import NetworkInfo from "./pages/admin/NetworkInfo";

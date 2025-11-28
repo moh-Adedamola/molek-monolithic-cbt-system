@@ -54,18 +54,30 @@ export const deleteExam = (id) => API.delete(`/admin/exams/${id}`);
 export const getSubjects = () => API.get('/admin/subjects');
 
 // ============================================
-// ADMIN: RESULTS
+// ADMIN: RESULTS - FIXED
 // ============================================
-export const getClassResults = (classLevel, subject = null) => {
-    const params = { class: classLevel };
-    if (subject) params.subject = subject;
+export const getClassResults = (classLevel = null, subject = null) => {
+    const params = {};
+    // ✅ FIX: Check for both null and empty string
+    if (classLevel && classLevel !== '') params.class = classLevel;
+    if (subject && subject !== '') params.subject = subject;
+
+    console.log('🔍 API getClassResults called with:', { classLevel, subject, params });
+
     return API.get('/admin/results/class', { params });
-}
-export const exportClassResultsAsText = (classLevel, subject) => {
-    return API.get(`/admin/results/export?class=${encodeURIComponent(classLevel)}&subject=${encodeURIComponent(subject)}`, {
+};
+
+export const exportClassResultsAsText = (classLevel = null, subject = null) => {
+    const params = {};
+    if (classLevel && classLevel !== '') params.class = classLevel;
+    if (subject && subject !== '') params.subject = subject;
+
+    const queryString = new URLSearchParams(params).toString();
+    return API.get(`/admin/results/export?${queryString}`, {
         responseType: 'blob'
     });
 };
+
 export const getFilteredResults = (params) => {
     const queryString = new URLSearchParams(params).toString();
     return API.get(`/admin/results/filtered?${queryString}`, { responseType: 'blob' });
