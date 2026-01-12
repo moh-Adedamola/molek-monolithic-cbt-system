@@ -19,7 +19,9 @@ const SubjectManagement = () => {
         try {
             setLoading(true);
             const response = await getSubjects();
-            const subjectsByClass = response.data?.subjects || {};
+
+            // ✅ FIXED: Use subjectsByClass from backend
+            const subjectsByClass = response.data?.subjectsByClass || {};
 
             // Flatten into table format
             const subjectList = [];
@@ -31,6 +33,7 @@ const SubjectManagement = () => {
 
             setSubjects(subjectList);
         } catch (error) {
+            console.error('Failed to load subjects:', error);
             setAlert({ type: 'error', message: 'Failed to load subjects' });
         } finally {
             setLoading(false);

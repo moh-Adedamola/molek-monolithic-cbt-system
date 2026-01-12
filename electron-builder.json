@@ -8,20 +8,33 @@
   },
   "files": [
     "electron/**/*",
+    "!electron/resources/**/*",
     "frontend/dist/**/*",
-    "backend/dist/**/*",
+    "backend/src/**/*",
+    "backend/package.json",
+    "backend/package-lock.json",
     "backend/node_modules/**/*",
+    "!backend/node_modules/.cache",
+    "!backend/node_modules/**/*.{md,markdown,txt}",
+    "!backend/node_modules/**/test/**/*",
+    "!backend/node_modules/**/tests/**/*",
     "package.json"
   ],
-  "afterPack": "./afterPack.js",
   "compression": "maximum",
   "asar": true,
 
-  "asarUnpack": [],
+  "asarUnpack": [
+    "backend/**/*.db",
+    "backend/src/**/*",
+    "backend/node_modules/bcrypt/**/*",
+    "backend/node_modules/sqlite3/**/*",
+    "backend/node_modules/better-sqlite3/**/*",
+    "**/*.node"
+  ],
 
-  "npmRebuild": false,
+  "npmRebuild": true,
   "buildDependenciesFromSource": false,
-  "nodeGypRebuild": false,
+  "nodeGypRebuild": true,
 
   "electronVersion": "28.0.0",
 
@@ -33,7 +46,8 @@
       }
     ],
     "icon": "electron/icon.ico",
-    "verifyUpdateCodeSignature": false
+    "verifyUpdateCodeSignature": false,
+    "requestedExecutionLevel": "requireAdministrator"
   },
 
   "nsis": {
@@ -48,8 +62,16 @@
     "shortcutName": "Molek CBT System",
     "runAfterFinish": true,
     "perMachine": true,
-    "deleteAppDataOnUninstall": true
+    "deleteAppDataOnUninstall": false
   },
+
+  "extraResources": [
+    {
+      "from": "backend/src/db",
+      "to": "backend/src/db",
+      "filter": ["**/*.db"]
+    }
+  ],
 
   "publish": {
     "provider": "generic",

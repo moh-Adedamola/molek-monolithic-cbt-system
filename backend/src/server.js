@@ -31,7 +31,28 @@ if (process.env.UPLOADS_PATH) {
         fs.mkdirSync(process.env.UPLOADS_PATH, { recursive: true });
         console.log('✅ Created uploads directory');
     }
+} else {
+    // ✅ NEW: Create default uploads directory
+    const defaultUploadsPath = path.join(__dirname, 'uploads');
+    if (!fs.existsSync(defaultUploadsPath)) {
+        fs.mkdirSync(defaultUploadsPath, { recursive: true });
+        console.log('✅ Created default uploads directory');
+    }
+
+    // ✅ NEW: Create questions subdirectory
+    const questionsPath = path.join(defaultUploadsPath, 'questions');
+    if (!fs.existsSync(questionsPath)) {
+        fs.mkdirSync(questionsPath, { recursive: true });
+        console.log('✅ Created uploads/questions directory');
+    }
 }
+
+// ============================================
+// ✅ NEW: Serve uploaded question images
+// ============================================
+const uploadsPath = process.env.UPLOADS_PATH || path.join(__dirname, 'uploads');
+app.use('/uploads', express.static(uploadsPath));
+console.log('✅ Static file serving enabled for:', uploadsPath);
 
 // Health check endpoint (put this BEFORE importing routes)
 app.get('/api/health', (req, res) => {
@@ -93,7 +114,7 @@ if (process.env.NODE_ENV === 'production') {
 
         // Handle React routing - return index.html for all non-API routes
         app.get('*', (req, res) => {
-            if (!req.path.startsWith('/api')) {
+            if (!req.path.startsWith('/api') && !req.path.startsWith('/uploads')) {
                 res.sendFile(path.join(frontendPath, 'index.html'));
             }
         });
@@ -113,14 +134,14 @@ app.use((err, req, res, next) => {
 
 // Start server
 const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log('╔════════════════════════════════════════╗');
+    console.log('╔═══════════════════════════════════════════╗');
     console.log('🚀 Molek CBT Backend Server');
-    console.log('╚════════════════════════════════════════╝');
+    console.log('╚═══════════════════════════════════════════╝');
     console.log(`📡 Server running on port ${PORT}`);
     console.log(`🌐 Local: http://localhost:${PORT}`);
     console.log(`🌐 Network: http://0.0.0.0:${PORT}`);
     console.log(`⚙️  Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log('╚════════════════════════════════════════╝');
+    console.log('╚═══════════════════════════════════════════╝');
 }).on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
         console.error(`❌ Port ${PORT} is already in use!`);

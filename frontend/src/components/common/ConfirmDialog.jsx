@@ -23,12 +23,13 @@ const ConfirmDialog = ({
             variant={variant}
         >
             <div className="space-y-6">
-                <p className={clsx(
+                {/* ✅ FIXED: Changed from <p> to <div> to allow complex HTML */}
+                <div className={clsx(
                     'text-base',
                     variant === 'dark' ? 'text-gray-300' : 'text-gray-600'
                 )}>
                     {message}
-                </p>
+                </div>
                 <div className="flex justify-end gap-3">
                     <Button
                         variant="secondary"

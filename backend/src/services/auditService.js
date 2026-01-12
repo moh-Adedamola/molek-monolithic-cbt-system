@@ -1,14 +1,13 @@
 const { run, all } = require('../utils/db');
 
-/**
- * Audit Log Actions
- */
 const ACTIONS = {
     // Student Actions
     STUDENT_LOGIN: 'STUDENT_LOGIN',
     STUDENT_LOGIN_FAILED: 'STUDENT_LOGIN_FAILED',
     EXAM_STARTED: 'EXAM_STARTED',
+    EXAM_RESUMED: 'EXAM_RESUMED', // ✅ NEW
     EXAM_SUBMITTED: 'EXAM_SUBMITTED',
+    EXAM_AUTO_SUBMITTED: 'EXAM_AUTO_SUBMITTED', // ✅ NEW
     EXAM_SUBMISSION_FAILED: 'EXAM_SUBMISSION_FAILED',
 
     // Admin Actions - Students
@@ -20,6 +19,9 @@ const ACTIONS = {
 
     // Admin Actions - Questions/Exams
     QUESTIONS_UPLOADED: 'QUESTIONS_UPLOADED',
+    QUESTIONS_UPLOAD_FAILED: 'QUESTIONS_UPLOAD_FAILED', // ✅ NEW
+    QUESTION_UPDATED: 'QUESTION_UPDATED', // ✅ NEW
+    QUESTION_DELETED: 'QUESTION_DELETED', // ✅ NEW
     EXAM_ACTIVATED: 'EXAM_ACTIVATED',
     EXAM_DEACTIVATED: 'EXAM_DEACTIVATED',
     EXAM_UPDATED: 'EXAM_UPDATED',
@@ -28,12 +30,13 @@ const ACTIONS = {
     // Admin Actions - Results
     RESULTS_VIEWED: 'RESULTS_VIEWED',
     RESULTS_EXPORTED: 'RESULTS_EXPORTED',
+    THEORY_GRADED: 'THEORY_GRADED', // ✅ NEW
 
     // System Actions
     SYSTEM_SETTINGS_UPDATED: 'SYSTEM_SETTINGS_UPDATED',
     DATABASE_BACKUP: 'DATABASE_BACKUP',
 
-    // Archive Action
+    // Archive Actions
     TERM_ARCHIVE_STARTED: 'TERM_ARCHIVE_STARTED',
     TERM_ARCHIVE_COMPLETED: 'TERM_ARCHIVE_COMPLETED',
     TERM_ARCHIVE_FAILED: 'TERM_ARCHIVE_FAILED',
@@ -44,14 +47,6 @@ const ACTIONS = {
 
 /**
  * Log an audit event
- * @param {Object} params - Audit log parameters
- * @param {string} params.action - Action type from ACTIONS
- * @param {string} params.userType - 'admin' or 'student'
- * @param {string} params.userIdentifier - Username, exam code, or IP
- * @param {string} params.details - Human-readable description
- * @param {string} params.ipAddress - IP address of the user
- * @param {string} params.status - 'success', 'failure', or 'warning'
- * @param {Object} params.metadata - Additional data (will be JSON stringified)
  */
 async function logAudit({
                             action,
@@ -82,8 +77,7 @@ async function logAudit({
 }
 
 /**
- * Get audit logs with optional filters
- * ✅ FIXED: Proper error handling with actual error object returned
+ * Get audit logs with filters
  */
 async function getAuditLogs(filters = {}) {
     try {
@@ -124,21 +118,18 @@ async function getAuditLogs(filters = {}) {
 
         const rows = await all(query, params);
 
-        // Parse metadata JSON for each row
         return rows.map(r => ({
             ...r,
             metadata: r.metadata ? JSON.parse(r.metadata) : {}
         }));
     } catch (error) {
         console.error('❌ getAuditLogs error:', error.message || error);
-        // ✅ FIXED: Throw error instead of returning empty array so controller can handle it
         throw new Error(`Failed to retrieve audit logs: ${error.message}`);
     }
 }
 
 /**
  * Get audit statistics
- * ✅ FIXED: Proper error handling with actual error object returned
  */
 async function getAuditStats() {
     try {
@@ -168,17 +159,28 @@ async function getAuditStats() {
                 LIMIT 10
         `);
 
+        // ✅ NEW: Get recent auto-submissions
+        const autoSubmissions = (await all(
+            `SELECT COUNT(*) as c FROM audit_logs WHERE action = 'EXAM_AUTO_SUBMITTED'`
+        ))[0]?.c || 0;
+
+        // ✅ NEW: Get theory grading activity
+        const theoryGraded = (await all(
+            `SELECT COUNT(*) as c FROM audit_logs WHERE action = 'THEORY_GRADED'`
+        ))[0]?.c || 0;
+
         return {
             total,
             today,
             successful,
             failed,
             thisWeek,
-            topActions
+            topActions,
+            autoSubmissions,
+            theoryGraded
         };
     } catch (error) {
         console.error('❌ getAuditStats error:', error.message || error);
-        // ✅ FIXED: Throw error instead of returning empty object so controller can handle it
         throw new Error(`Failed to retrieve audit statistics: ${error.message}`);
     }
 }
@@ -193,7 +195,7 @@ async function cleanOldLogs(daysToKeep = 90) {
             [daysToKeep]
         );
         const changes = result?.changes || 0;
-        console.log(`🗑️  Deleted ${changes} old audit logs (older than ${daysToKeep} days)`);
+        console.log(`🗑️ Deleted ${changes} old audit logs (older than ${daysToKeep} days)`);
         return changes;
     } catch (error) {
         console.error('❌ cleanOldLogs error:', error.message || error);

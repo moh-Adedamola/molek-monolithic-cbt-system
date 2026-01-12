@@ -1,4 +1,4 @@
-const archiveService = require('../services/archiveService');
+const archiveService = require('../../services/archiveService');
 
 /**
  * Archive current term

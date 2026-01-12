@@ -1,18 +1,7 @@
-const { run, get, all } = require('../utils/db');
+const { get, all, run } = require('../utils/db');
 const { verifyPassword } = require('../services/authService');
-const { getCorrectAnswers, gradeExam } = require('../services/examService');
+const { getQuestionsWithAnswers, gradeExam } = require('../services/examService');
 const { logAudit, ACTIONS } = require('../services/auditService');
-const { getSettings } = require('../services/settingsService'); // ✅ ADD THIS
-
-// ✅ ADD: Shuffle function
-function shuffleArray(array) {
-    const shuffled = [...array];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-    }
-    return shuffled;
-}
 
 // Helper to get IP address
 function getClientIp(req) {
@@ -22,397 +11,395 @@ function getClientIp(req) {
         'unknown';
 }
 
-async function studentLogin(req, res) {
-    const { exam_code, password } = req.body;
-
-    if (!exam_code || !password) {
-        return res.status(400).json({
-            error: 'Please provide both exam code and password'
-        });
-    }
-
+/**
+ * Student Login
+ * POST /api/students/login
+ */
+async function login(req, res) {
     try {
-        const student = await get('SELECT * FROM students WHERE exam_code = ?', [exam_code]);
+        const { admission_number, password } = req.body;
 
-        if (!student) {
-            await logAudit({
-                action: ACTIONS.STUDENT_LOGIN_FAILED,
-                userType: 'student',
-                userIdentifier: exam_code,
-                details: 'Student not found',
-                ipAddress: getClientIp(req),
-                status: 'failure'
-            });
-            return res.status(401).json({
-                error: 'Invalid exam code or password. Please check your credentials.'
+        if (!admission_number || !password) {
+            return res.status(400).json({
+                error: 'Admission number and password are required'
             });
         }
 
-        const isPasswordValid = await verifyPassword(password, student.password_hash);
-        if (!isPasswordValid) {
+        console.log(`🔐 Login attempt: ${admission_number}`);
+
+        // Find student by admission number
+        const student = await get(
+            'SELECT * FROM students WHERE admission_number = ?',
+            [admission_number.toUpperCase()]
+        );
+
+        if (!student) {
+            console.log(`❌ Student not found: ${admission_number}`);
+
             await logAudit({
                 action: ACTIONS.STUDENT_LOGIN_FAILED,
                 userType: 'student',
-                userIdentifier: exam_code,
+                userIdentifier: admission_number,
+                details: 'Invalid admission number',
+                ipAddress: getClientIp(req),
+                status: 'failure'
+            });
+
+            return res.status(404).json({
+                error: 'Student not found'
+            });
+        }
+
+        // Verify password
+        const isValid = await verifyPassword(password, student.password_hash);
+
+        if (!isValid) {
+            console.log(`❌ Invalid password for: ${admission_number}`);
+
+            await logAudit({
+                action: ACTIONS.STUDENT_LOGIN_FAILED,
+                userType: 'student',
+                userIdentifier: admission_number,
                 details: 'Invalid password',
                 ipAddress: getClientIp(req),
                 status: 'failure'
             });
+
             return res.status(401).json({
-                error: 'Invalid exam code or password. Please check your credentials.'
+                error: 'Invalid password'
             });
         }
 
-        const activeExams = await all(`
-            SELECT e.subject, e.duration_minutes, e.class
-            FROM exams e
-                     LEFT JOIN submissions sub ON sub.student_id = ? AND sub.subject = e.subject AND sub.submitted_at IS NOT NULL
-            WHERE e.class = ? AND e.is_active = 1
-        `, [student.id, student.class]);
+        // Get active exams for this student's class
+        const activeExams = await all(
+            'SELECT subject, duration_minutes FROM exams WHERE class = ? AND is_active = 1',
+            [student.class]
+        );
 
-        if (!activeExams || activeExams.length === 0) {
-            await logAudit({
-                action: ACTIONS.STUDENT_LOGIN_FAILED,
-                userType: 'student',
-                userIdentifier: exam_code,
-                details: 'No active exams available',
-                ipAddress: getClientIp(req),
-                status: 'failure'
-            });
-            return res.status(403).json({
-                error: 'No active exams available for your class at this time. Please contact your administrator.'
-            });
-        }
+        console.log(`✅ Login successful: ${admission_number}`);
 
         await logAudit({
             action: ACTIONS.STUDENT_LOGIN,
             userType: 'student',
-            userIdentifier: exam_code,
-            details: `Successful login - ${activeExams.length} exam(s) available`,
+            userIdentifier: admission_number,
+            details: `Login successful: ${student.first_name} ${student.last_name}`,
             ipAddress: getClientIp(req),
             status: 'success',
-            metadata: {
-                studentId: student.id,
-                class: student.class,
-                examCount: activeExams.length
-            }
+            metadata: { class: student.class, activeExamsCount: activeExams.length }
         });
 
         res.json({
+            success: true,
             student_id: student.id,
+            admission_number: student.admission_number,
             full_name: `${student.first_name} ${student.middle_name || ''} ${student.last_name}`.trim(),
             class: student.class,
-            exam_code: student.exam_code,
             active_exams: activeExams
         });
+
     } catch (error) {
-        console.error('studentLogin error:', error);
-        await logAudit({
-            action: ACTIONS.STUDENT_LOGIN_FAILED,
-            userType: 'student',
-            userIdentifier: exam_code || 'unknown',
-            details: 'System error during login',
-            ipAddress: getClientIp(req),
-            status: 'failure'
+        console.error('❌ Student login error:', error);
+        res.status(500).json({
+            error: 'Login failed. Please try again.'
         });
-        res.status(500).json({ error: 'An error occurred. Please try again.' });
     }
 }
 
-// ✅ FIXED: Using req.params and req.query like your original
+/**
+ * Get Exam Questions - ✅ UPDATED to use admission_number
+ * GET /api/students/exam/:subject/questions?admission_number=...
+ */
 async function getExamQuestions(req, res) {
     try {
         const { subject } = req.params;
-        const { exam_code } = req.query;
+        const { admission_number } = req.query;
 
-        console.log('📝 getExamQuestions:', { subject, exam_code });
-
-        if (!subject || !exam_code) {
-            return res.status(400).json({ error: 'Subject and exam code are required' });
+        if (!admission_number) {
+            return res.status(400).json({ error: 'Admission number required' });
         }
 
-        const student = await get('SELECT * FROM students WHERE exam_code = ?', [exam_code]);
+        console.log(`📚 Loading exam: ${subject} for ${admission_number}`);
+
+        // Get student info
+        const student = await get(
+            'SELECT id, class, first_name, last_name FROM students WHERE admission_number = ?',
+            [admission_number.toUpperCase()]
+        );
+
         if (!student) {
-            return res.status(404).json({ error: 'Student not found with this exam code' });
+            return res.status(404).json({ error: 'Student not found' });
         }
 
+        // Get exam
         const exam = await get(
             'SELECT * FROM exams WHERE subject = ? AND class = ? AND is_active = 1',
             [subject, student.class]
         );
 
         if (!exam) {
-            return res.status(404).json({ error: 'Exam not found or not active for your class' });
+            return res.status(404).json({
+                error: 'No active exam found for this subject'
+            });
         }
 
-        // Get questions
-        let questions = await all(
-            'SELECT id, question_text, option_a, option_b, option_c, option_d FROM questions WHERE exam_id = ?',
+        // Get questions (including theory questions)
+        const questions = await all(
+            `SELECT id, question_text, option_a, option_b, option_c, option_d, 
+                    question_type, image_url, points 
+             FROM questions 
+             WHERE exam_id = ?
+             ORDER BY id`,
             [exam.id]
         );
 
-        if (!questions || questions.length === 0) {
-            return res.status(404).json({ error: 'No questions found for this exam' });
-        }
+        console.log(`📝 Loaded ${questions.length} questions`);
 
-        // ✅ NEW: Get settings and shuffle if enabled
-        const settings = await getSettings();
-        if (settings.shuffleQuestions) {
-            questions = shuffleArray(questions);
-            console.log('🔀 Questions shuffled for student:', exam_code);
-        } else {
-            console.log('📋 Questions NOT shuffled (setting disabled)');
-        }
-
+        // Check if student already submitted
         const existingSubmission = await get(
-            'SELECT * FROM submissions WHERE student_id = ? AND subject = ?',
+            'SELECT id FROM submissions WHERE student_id = ? AND subject = ?',
             [student.id, subject]
         );
 
-        let timeRemaining = exam.duration_minutes * 60;
-        let examStartedAt = null;
-        let savedAnswers = null;
-
         if (existingSubmission) {
-            if (existingSubmission.submitted_at) {
-                return res.status(400).json({ error: 'You have already submitted this exam. You cannot retake it.' });
-            }
-
-            if (existingSubmission.exam_started_at) {
-                examStartedAt = new Date(existingSubmission.exam_started_at);
-                const now = Date.now();
-                const elapsedMillis = now - examStartedAt.getTime();
-                const elapsedSeconds = Math.floor(elapsedMillis / 1000);
-                const totalSeconds = exam.duration_minutes * 60;
-                timeRemaining = Math.max(0, totalSeconds - elapsedSeconds);
-
-                if (timeRemaining === 0) {
-                    return res.status(400).json({
-                        error: 'Time has expired for this exam. Please contact your administrator.',
-                        timeExpired: true
-                    });
-                }
-
-                if (existingSubmission.answers) {
-                    try {
-                        savedAnswers = JSON.parse(existingSubmission.answers);
-                    } catch (e) {
-                        console.error('Failed to parse saved answers:', e);
-                    }
-                }
-
-                console.log(`⏱️  Exam resumed for ${exam_code} - ${subject}: Elapsed: ${elapsedSeconds}s, Remaining: ${timeRemaining}s`);
-            }
-        } else {
-            examStartedAt = new Date();
-            await run(
-                `INSERT INTO submissions
-                 (student_id, subject, exam_started_at, duration_minutes, answers, score, total_questions, submitted_at)
-                 VALUES (?, ?, ?, ?, NULL, NULL, NULL, NULL)`,
-                [student.id, subject, examStartedAt.toISOString(), exam.duration_minutes]
-            );
-            console.log(`🆕 New exam session started for ${exam_code} - ${subject}`);
+            return res.status(400).json({
+                error: 'You have already submitted this exam',
+                already_submitted: true
+            });
         }
 
-        // ✅ Log audit
-        await logAudit({
-            action: ACTIONS.EXAM_STARTED,
-            userType: 'student',
-            userIdentifier: exam_code,
-            details: `Started/resumed ${subject} exam`,
-            ipAddress: getClientIp(req),
-            status: 'success',
-            metadata: {
-                subject,
-                questionCount: questions.length,
-                timeRemaining,
-                isResume: !!existingSubmission?.exam_started_at,
-                shuffled: settings.shuffleQuestions
-            }
-        });
+        // Get or create exam session
+        let session = await get(
+            'SELECT * FROM exam_sessions WHERE student_id = ? AND subject = ?',
+            [student.id, subject]
+        );
+
+        if (!session) {
+            // Create new session
+            await run(
+                `INSERT INTO exam_sessions (student_id, subject, start_time, time_remaining)
+                 VALUES (?, ?, datetime('now'), ?)`,
+                [student.id, subject, exam.duration_minutes * 60]
+            );
+
+            session = await get(
+                'SELECT * FROM exam_sessions WHERE student_id = ? AND subject = ?',
+                [student.id, subject]
+            );
+
+            console.log(`✅ Started new exam session`);
+
+            await logAudit({
+                action: ACTIONS.EXAM_STARTED,
+                userType: 'student',
+                userIdentifier: admission_number,
+                details: `Started exam: ${subject}`,
+                ipAddress: getClientIp(req),
+                status: 'success',
+                metadata: { subject, examId: exam.id }
+            });
+        } else {
+            console.log(`🔄 Resumed existing exam session`);
+
+            await logAudit({
+                action: ACTIONS.EXAM_RESUMED,
+                userType: 'student',
+                userIdentifier: admission_number,
+                details: `Resumed exam: ${subject}`,
+                ipAddress: getClientIp(req),
+                status: 'success',
+                metadata: { subject, sessionId: session.id }
+            });
+        }
 
         res.json({
-            questions,
-            time_remaining: timeRemaining,
-            exam_started_at: examStartedAt?.toISOString(),
-            duration_minutes: exam.duration_minutes,
-            saved_answers: savedAnswers,
-            shuffled: settings.shuffleQuestions
+            exam: {
+                id: exam.id,
+                subject: exam.subject,
+                duration_minutes: exam.duration_minutes,
+                total_questions: questions.length
+            },
+            questions: questions.map(q => ({
+                id: q.id,
+                question_text: q.question_text,
+                option_a: q.option_a,
+                option_b: q.option_b,
+                option_c: q.option_c,
+                option_d: q.option_d,
+                question_type: q.question_type || 'mcq',
+                image_url: q.image_url ? `/uploads/questions/${q.image_url}` : null,
+                points: q.points || 1
+            })),
+            time_remaining: session.time_remaining,
+            saved_answers: session.answers ? JSON.parse(session.answers) : {},
+            exam_started_at: session.start_time
         });
 
     } catch (error) {
-        console.error('❌ getExamQuestions error:', error);
-        res.status(500).json({ error: 'Failed to load exam questions. Please try again.' });
+        console.error('❌ Get exam questions error:', error);
+        res.status(500).json({ error: 'Failed to load exam' });
     }
 }
 
+/**
+ * Save Exam Progress - ✅ UPDATED to use admission_number
+ * POST /api/students/exam/save-progress
+ */
 async function saveExamProgress(req, res) {
     try {
-        const { exam_code, subject, answers } = req.body;
+        const { admission_number, subject, answers } = req.body;
 
-        if (!exam_code || !subject || !answers) {
-            return res.status(400).json({ error: 'Exam code, subject, and answers are required' });
+        if (!admission_number || !subject) {
+            return res.status(400).json({ error: 'Missing required fields' });
         }
 
-        const student = await get('SELECT * FROM students WHERE exam_code = ?', [exam_code]);
+        const student = await get(
+            'SELECT id FROM students WHERE admission_number = ?',
+            [admission_number.toUpperCase()]
+        );
+
         if (!student) {
             return res.status(404).json({ error: 'Student not found' });
         }
 
-        const submission = await get(
-            'SELECT * FROM submissions WHERE student_id = ? AND subject = ?',
-            [student.id, subject]
-        );
-
-        if (!submission) {
-            return res.status(400).json({ error: 'No exam session found. Please start the exam first.' });
-        }
-
-        if (submission.submitted_at) {
-            return res.status(400).json({ error: 'Exam already submitted. Cannot save progress.' });
-        }
-
-        if (submission.exam_started_at) {
-            const startTime = new Date(submission.exam_started_at).getTime();
-            const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
-            const totalSeconds = submission.duration_minutes * 60;
-
-            if (elapsedSeconds > totalSeconds) {
-                return res.status(400).json({
-                    error: 'Time expired. Cannot save progress.',
-                    timeExpired: true
-                });
-            }
-        }
-
+        // Update session with answers
         await run(
-            'UPDATE submissions SET answers = ? WHERE student_id = ? AND subject = ?',
+            `UPDATE exam_sessions
+             SET answers = ?, last_activity = datetime('now')
+             WHERE student_id = ? AND subject = ?`,
             [JSON.stringify(answers), student.id, subject]
         );
 
-        console.log(`💾 Auto-saved ${Object.keys(answers).length} answers for ${exam_code} - ${subject}`);
+        console.log(`💾 Saved progress for ${admission_number} - ${subject}`);
 
-        res.json({
-            success: true,
-            saved: Object.keys(answers).length,
-            message: 'Progress saved successfully'
-        });
+        res.json({ success: true, message: 'Progress saved' });
 
     } catch (error) {
-        console.error('❌ saveExamProgress error:', error);
-        res.status(500).json({ error: 'Failed to save progress. Your answers may not be saved.' });
+        console.error('❌ Save progress error:', error);
+        res.status(500).json({ error: 'Failed to save progress' });
     }
 }
 
+/**
+ * Submit Exam - ✅ UPDATED to use admission_number and support theory questions
+ * POST /api/students/exam/submit
+ */
 async function submitExam(req, res) {
     try {
-        const { exam_code, subject, answers } = req.body;
+        const { admission_number, subject, answers, is_auto_submit } = req.body;
 
-        console.log('📤 submitExam:', { exam_code, subject, answerCount: Object.keys(answers || {}).length });
-
-        if (!exam_code || !subject || !answers) {
-            return res.status(400).json({ error: 'Exam code, subject, and answers are required' });
+        if (!admission_number || !subject || !answers) {
+            return res.status(400).json({ error: 'Missing required fields' });
         }
 
-        const student = await get('SELECT * FROM students WHERE exam_code = ?', [exam_code]);
+        console.log(`📤 Submitting exam: ${subject} for ${admission_number}`);
+
+        const student = await get(
+            'SELECT * FROM students WHERE admission_number = ?',
+            [admission_number.toUpperCase()]
+        );
+
         if (!student) {
-            return res.status(404).json({ error: 'Student not found with this exam code' });
+            return res.status(404).json({ error: 'Student not found' });
         }
 
-        const submission = await get(
-            'SELECT * FROM submissions WHERE student_id = ? AND subject = ?',
+        // Check if already submitted
+        const existingSubmission = await get(
+            'SELECT id FROM submissions WHERE student_id = ? AND subject = ?',
             [student.id, subject]
         );
 
-        if (!submission) {
-            return res.status(400).json({ error: 'No exam session found. Please start the exam first.' });
-        }
-
-        if (submission.submitted_at) {
-            return res.status(400).json({ error: 'Exam already submitted. You cannot submit twice.' });
-        }
-
-        if (submission.exam_started_at) {
-            const startTime = new Date(submission.exam_started_at).getTime();
-            const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
-            const totalSeconds = submission.duration_minutes * 60;
-
-            if (elapsedSeconds > totalSeconds + 60) {
-                return res.status(400).json({
-                    error: 'Time has expired. Your answers have been auto-saved.',
-                    timeExpired: true
-                });
-            }
-        }
-
-        // ✅ FIXED: Use getCorrectAnswers like the original
-        const correctAnswers = await getCorrectAnswers(subject, student.class);
-
-        if (!correctAnswers || Object.keys(correctAnswers).length === 0) {
-            return res.status(500).json({
-                error: 'Unable to grade exam. Please contact your administrator.'
+        if (existingSubmission) {
+            return res.status(400).json({
+                error: 'Exam already submitted',
+                already_submitted: true
             });
         }
 
-        // ✅ FIXED: Use gradeExam with correct signature
-        const score = gradeExam(answers, correctAnswers);
-        const total = Object.keys(correctAnswers).length;
-        const percentage = Math.round((score / total) * 100);
+        // Get questions with answers for grading
+        const questions = await getQuestionsWithAnswers(subject, student.class);
 
+        if (questions.length === 0) {
+            return res.status(404).json({ error: 'No questions found for this exam' });
+        }
+
+        // Grade exam (handles both MCQ and Theory with fuzzy matching)
+        const gradingResult = gradeExam(answers, questions);
+
+        console.log(`✅ Grading complete:`);
+        console.log(`   MCQ Score: ${gradingResult.mcqScore}`);
+        console.log(`   Theory Score: ${gradingResult.theoryScore}`);
+        console.log(`   Total: ${gradingResult.totalScore}/${gradingResult.totalPoints}`);
+
+        // Save submission
         await run(
-            `UPDATE submissions
-             SET answers = ?, score = ?, total_questions = ?, submitted_at = CURRENT_TIMESTAMP
-             WHERE student_id = ? AND subject = ?`,
-            [JSON.stringify(answers), score, total, student.id, subject]
+            `INSERT INTO submissions (
+                student_id, subject, answers, score, total_questions,
+                total_possible_points, theory_pending, auto_submitted, submitted_at
+            )
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+            [
+                student.id,
+                subject,
+                JSON.stringify(answers),
+                gradingResult.totalScore,
+                questions.length,
+                gradingResult.totalPoints,
+                0, // theory_pending (auto-graded with fuzzy matching)
+                is_auto_submit ? 1 : 0
+            ]
         );
 
-        // ✅ Log audit
+        // Delete exam session
+        await run(
+            'DELETE FROM exam_sessions WHERE student_id = ? AND subject = ?',
+            [student.id, subject]
+        );
+
         await logAudit({
-            action: ACTIONS.EXAM_SUBMITTED,
+            action: is_auto_submit ? ACTIONS.EXAM_AUTO_SUBMITTED : ACTIONS.EXAM_SUBMITTED,
             userType: 'student',
-            userIdentifier: exam_code,
-            details: `Submitted ${subject} exam: ${score}/${total} (${percentage}%)`,
+            userIdentifier: admission_number,
+            details: `Submitted exam: ${subject} - Score: ${gradingResult.totalScore}/${gradingResult.totalPoints}`,
             ipAddress: getClientIp(req),
             status: 'success',
             metadata: {
                 subject,
-                score,
-                total,
-                percentage,
-                answeredCount: Object.keys(answers).length
+                score: gradingResult.totalScore,
+                totalPoints: gradingResult.totalPoints,
+                mcqScore: gradingResult.mcqScore,
+                theoryScore: gradingResult.theoryScore,
+                autoSubmitted: is_auto_submit || false
             }
         });
 
-        console.log(`✅ Exam submitted: ${exam_code} - ${subject}: ${score}/${total} (${percentage}%)`);
-
-        // ✅ NEW: Check settings for showing results
-        const settings = await getSettings();
-
-        const response = {
+        res.json({
             success: true,
-            message: 'Exam submitted successfully'
-        };
-
-        // Only include score if setting is enabled
-        if (settings.showResults) {
-            response.score = score;
-            response.total = total;
-            response.percentage = percentage;
-            console.log(`✅ Results shown to student (setting enabled)`);
-        } else {
-            console.log(`✅ Results hidden from student (setting disabled)`);
-        }
-
-        res.json(response);
+            score: gradingResult.totalScore,
+            total_questions: questions.length,
+            total_possible_points: gradingResult.totalPoints,
+            percentage: Math.round((gradingResult.totalScore / gradingResult.totalPoints) * 100),
+            mcq_score: gradingResult.mcqScore,
+            theory_score: gradingResult.theoryScore
+        });
 
     } catch (error) {
-        console.error('❌ submitExam error:', error);
-        res.status(500).json({ error: 'Failed to submit exam. Please try again or contact your administrator.' });
+        console.error('❌ Submit exam error:', error);
+
+        await logAudit({
+            action: ACTIONS.EXAM_SUBMISSION_FAILED,
+            userType: 'student',
+            userIdentifier: req.body.admission_number || 'unknown',
+            details: `Submission failed: ${error.message}`,
+            ipAddress: getClientIp(req),
+            status: 'failure'
+        });
+
+        res.status(500).json({ error: 'Failed to submit exam' });
     }
 }
 
 module.exports = {
-    studentLogin,
+    login,
     getExamQuestions,
     saveExamProgress,
     submitExam

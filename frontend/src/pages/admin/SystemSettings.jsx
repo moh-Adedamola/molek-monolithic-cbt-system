@@ -1,246 +1,292 @@
 import { useState, useEffect } from 'react';
-import { Save, Database, Settings, Info } from 'lucide-react';
+import { Save, Settings, School, Calendar, Clock, Shield, Eye, Shuffle, Loader2 } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Card from '../../components/common/Card';
 import Input from '../../components/common/Input';
-import Select from '../../components/common/Select';
 import Alert from '../../components/common/Alert';
-import { getDashboardStats, getSystemSettings, updateSystemSettings } from '../../services/api';
+import { getSystemSettings, updateSystemSettings } from '../../services/api';
 
-const TERM_OPTIONS = [
-    { value: 'First Term', label: 'First Term' },
-    { value: 'Second Term', label: 'Second Term' },
-    { value: 'Third Term', label: 'Third Term' }
-];
-
-const SystemSettings = () => {
-    const [alert, setAlert] = useState(null);
-    const [loading, setLoading] = useState(false);
-    const [loadingSettings, setLoadingSettings] = useState(true);
-    const [stats, setStats] = useState(null);
+export default function SystemSettings() {
     const [settings, setSettings] = useState({
-        systemName: 'Molek CBT System',
-        schoolName: 'Molek School',
-        academicSession: '2024/2025',
-        currentTerm: 'First Term',
+        systemName: '',
+        schoolName: '',
+        academicSession: '',
+        currentTerm: '',
         defaultExamDuration: 60,
         autoSubmit: true,
         shuffleQuestions: false,
-        showResults: true,
+        showResults: true
     });
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [alert, setAlert] = useState(null);
 
     useEffect(() => {
-        loadStats();
         loadSettings();
     }, []);
 
-    const loadStats = async () => {
-        try {
-            const response = await getDashboardStats();
-            setStats(response.data);
-        } catch (error) {
-            console.error('Failed to load stats:', error);
-        }
-    };
-
     const loadSettings = async () => {
         try {
-            setLoadingSettings(true);
-            const response = await getSystemSettings();
-            if (response.data.success && response.data.settings) {
-                setSettings(response.data.settings);
-            }
+            setLoading(true);
+            const res = await getSystemSettings();
+            setSettings(res.data.settings);
         } catch (error) {
             console.error('Failed to load settings:', error);
             setAlert({ type: 'error', message: 'Failed to load settings' });
-        } finally {
-            setLoadingSettings(false);
-        }
-    };
-
-    const handleSave = async () => {
-        try {
-            setLoading(true);
-            const response = await updateSystemSettings(settings);
-
-            if (response.data.success) {
-                setAlert({ type: 'success', message: 'Settings saved successfully!' });
-                // Update local state with response
-                if (response.data.settings) {
-                    setSettings(response.data.settings);
-                }
-            }
-        } catch (error) {
-            console.error('Failed to save settings:', error);
-            setAlert({ type: 'error', message: 'Failed to save settings' });
         } finally {
             setLoading(false);
         }
     };
 
-    if (loadingSettings) {
+    const handleChange = (e) => {
+        const { name, value, type, checked } = e.target;
+        setSettings(prev => ({
+            ...prev,
+            [name]: type === 'checkbox' ? checked : value
+        }));
+    };
+
+    const handleSave = async () => {
+        try {
+            setSaving(true);
+            setAlert(null);
+
+            await updateSystemSettings(settings);
+
+            setAlert({
+                type: 'success',
+                message: 'Settings saved successfully!'
+            });
+        } catch (error) {
+            console.error('Failed to save settings:', error);
+            setAlert({
+                type: 'error',
+                message: error.response?.data?.error || 'Failed to save settings'
+            });
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    if (loading) {
         return (
             <div className="flex items-center justify-center h-64">
-                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+                <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
             </div>
         );
     }
 
     return (
         <div className="space-y-6">
-            {alert && (
-                <Alert type={alert.type} message={alert.message} onClose={() => setAlert(null)} />
-            )}
-
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900">System Settings</h1>
-                    <p className="mt-1 text-sm text-gray-600">Configure system preferences and options</p>
+                    <h1 className="text-3xl font-bold text-gray-900">System Settings</h1>
+                    <p className="text-gray-600 mt-1">Configure your CBT system</p>
                 </div>
+                <Button
+                    variant="primary"
+                    onClick={handleSave}
+                    disabled={saving}
+                >
+                    {saving ? (
+                        <>
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                            Saving...
+                        </>
+                    ) : (
+                        <>
+                            <Save className="h-4 w-4 mr-2" />
+                            Save Changes
+                        </>
+                    )}
+                </Button>
             </div>
 
-            {/* System Information */}
-            {stats && (
-                <Card>
-                    <div className="flex items-center gap-2 mb-4">
-                        <Info className="h-5 w-5 text-blue-600" />
-                        <h3 className="text-lg font-semibold">System Information</h3>
-                    </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                        <div>
-                            <p className="text-gray-600">Total Students</p>
-                            <p className="text-2xl font-bold text-gray-900">{stats.totalStudents}</p>
-                        </div>
-                        <div>
-                            <p className="text-gray-600">Total Exams</p>
-                            <p className="text-2xl font-bold text-gray-900">{stats.totalExams}</p>
-                        </div>
-                        <div>
-                            <p className="text-gray-600">Active Exams</p>
-                            <p className="text-2xl font-bold text-blue-600">{stats.activeExams}</p>
-                        </div>
-                        <div>
-                            <p className="text-gray-600">Submissions</p>
-                            <p className="text-2xl font-bold text-green-600">{stats.totalSubmissions}</p>
-                        </div>
-                    </div>
-                </Card>
+            {alert && (
+                <Alert
+                    type={alert.type}
+                    message={alert.message}
+                    onClose={() => setAlert(null)}
+                />
             )}
 
-            {/* General Settings */}
+            {/* School Information */}
             <Card>
-                <div className="flex items-center gap-2 mb-4">
-                    <Settings className="h-5 w-5 text-blue-600" />
-                    <h3 className="text-lg font-semibold">General Settings</h3>
+                <div className="p-6">
+                    <div className="flex items-center gap-3 mb-6">
+                        <School className="h-6 w-6 text-blue-600" />
+                        <div>
+                            <h2 className="text-xl font-bold text-gray-900">School Information</h2>
+                            <p className="text-sm text-gray-600">Basic school details</p>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <Input
+                            label="System Name"
+                            name="systemName"
+                            value={settings.systemName}
+                            onChange={handleChange}
+                            placeholder="e.g., Molek CBT System"
+                        />
+                        <Input
+                            label="School Name"
+                            name="schoolName"
+                            value={settings.schoolName}
+                            onChange={handleChange}
+                            placeholder="e.g., Molek School"
+                        />
+                    </div>
                 </div>
-                <div className="space-y-4">
-                    <Input
-                        label="System Name"
-                        value={settings.systemName}
-                        onChange={(e) => setSettings({ ...settings, systemName: e.target.value })}
-                        placeholder="e.g., Molek CBT System"
-                    />
-                    <Input
-                        label="School Name"
-                        value={settings.schoolName}
-                        onChange={(e) => setSettings({ ...settings, schoolName: e.target.value })}
-                        placeholder="e.g., Molek School"
-                    />
-                    <Input
-                        label="Academic Session"
-                        value={settings.academicSession}
-                        onChange={(e) => setSettings({ ...settings, academicSession: e.target.value })}
-                        placeholder="e.g., 2024/2025"
-                    />
-                    <p className="text-xs text-gray-500 -mt-2">Format: YYYY/YYYY (e.g., 2024/2025)</p>
-                    <Select
-                        label="Current Term"
-                        value={settings.currentTerm}
-                        onChange={(e) => setSettings({ ...settings, currentTerm: e.target.value })}
-                        options={TERM_OPTIONS}
-                    />
-                    <Input
-                        label="Default Exam Duration (minutes)"
-                        type="number"
-                        min="10"
-                        max="300"
-                        value={settings.defaultExamDuration}
-                        onChange={(e) => setSettings({ ...settings, defaultExamDuration: parseInt(e.target.value) })}
-                    />
+            </Card>
+
+            {/* Academic Information */}
+            <Card>
+                <div className="p-6">
+                    <div className="flex items-center gap-3 mb-6">
+                        <Calendar className="h-6 w-6 text-blue-600" />
+                        <div>
+                            <h2 className="text-xl font-bold text-gray-900">Academic Information</h2>
+                            <p className="text-sm text-gray-600">Current session and term</p>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <Input
+                            label="Academic Session"
+                            name="academicSession"
+                            value={settings.academicSession}
+                            onChange={handleChange}
+                            placeholder="e.g., 2024/2025"
+                        />
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                Current Term
+                            </label>
+                            <select
+                                name="currentTerm"
+                                value={settings.currentTerm}
+                                onChange={handleChange}
+                                className="w-full px-4 py-2.5 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                                <option value="First Term">First Term</option>
+                                <option value="Second Term">Second Term</option>
+                                <option value="Third Term">Third Term</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
             </Card>
 
             {/* Exam Settings */}
             <Card>
-                <h3 className="text-lg font-semibold mb-4">Exam Behavior</h3>
-                <div className="space-y-4">
-                    <label className="flex items-center justify-between p-4 border rounded-lg cursor-pointer hover:bg-gray-50">
+                <div className="p-6">
+                    <div className="flex items-center gap-3 mb-6">
+                        <Clock className="h-6 w-6 text-blue-600" />
                         <div>
-                            <p className="font-medium text-gray-900">Auto-submit on timeout</p>
-                            <p className="text-sm text-gray-600">Automatically submit exam when time expires</p>
+                            <h2 className="text-xl font-bold text-gray-900">Exam Settings</h2>
+                            <p className="text-sm text-gray-600">Default exam behavior</p>
                         </div>
-                        <input
-                            type="checkbox"
-                            checked={settings.autoSubmit}
-                            onChange={(e) => setSettings({ ...settings, autoSubmit: e.target.checked })}
-                            className="h-5 w-5 text-blue-600 rounded focus:ring-blue-500"
+                    </div>
+                    <div className="space-y-4">
+                        <Input
+                            label="Default Exam Duration (minutes)"
+                            name="defaultExamDuration"
+                            type="number"
+                            min="1"
+                            value={settings.defaultExamDuration}
+                            onChange={handleChange}
+                            placeholder="60"
                         />
-                    </label>
 
-                    <label className="flex items-center justify-between p-4 border rounded-lg cursor-pointer hover:bg-gray-50">
-                        <div>
-                            <p className="font-medium text-gray-900">Shuffle questions</p>
-                            <p className="text-sm text-gray-600">Randomize question order for each student</p>
-                        </div>
-                        <input
-                            type="checkbox"
-                            checked={settings.shuffleQuestions}
-                            onChange={(e) => setSettings({ ...settings, shuffleQuestions: e.target.checked })}
-                            className="h-5 w-5 text-blue-600 rounded focus:ring-blue-500"
-                        />
-                    </label>
+                        {/* Toggle Settings */}
+                        <div className="space-y-4 pt-4 border-t">
+                            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                                <div className="flex items-start gap-3">
+                                    <Shield className="h-5 w-5 text-blue-600 mt-0.5" />
+                                    <div>
+                                        <h3 className="font-semibold text-gray-900">Auto-Submit on Timeout</h3>
+                                        <p className="text-sm text-gray-600">
+                                            Automatically submit exam when time expires
+                                        </p>
+                                    </div>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        name="autoSubmit"
+                                        checked={settings.autoSubmit}
+                                        onChange={handleChange}
+                                        className="sr-only peer"
+                                    />
+                                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                </label>
+                            </div>
 
-                    <label className="flex items-center justify-between p-4 border rounded-lg cursor-pointer hover:bg-gray-50">
-                        <div>
-                            <p className="font-medium text-gray-900">Show results immediately</p>
-                            <p className="text-sm text-gray-600">Display scores to students after submission</p>
+                            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                                <div className="flex items-start gap-3">
+                                    <Shuffle className="h-5 w-5 text-blue-600 mt-0.5" />
+                                    <div>
+                                        <h3 className="font-semibold text-gray-900">Shuffle Questions</h3>
+                                        <p className="text-sm text-gray-600">
+                                            Randomize question order for each student
+                                        </p>
+                                    </div>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        name="shuffleQuestions"
+                                        checked={settings.shuffleQuestions}
+                                        onChange={handleChange}
+                                        className="sr-only peer"
+                                    />
+                                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                </label>
+                            </div>
+
+                            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                                <div className="flex items-start gap-3">
+                                    <Eye className="h-5 w-5 text-blue-600 mt-0.5" />
+                                    <div>
+                                        <h3 className="font-semibold text-gray-900">Show Results After Submission</h3>
+                                        <p className="text-sm text-gray-600">
+                                            Display score immediately after exam submission
+                                        </p>
+                                    </div>
+                                </div>
+                                <label className="relative inline-flex items-center cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        name="showResults"
+                                        checked={settings.showResults}
+                                        onChange={handleChange}
+                                        className="sr-only peer"
+                                    />
+                                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                </label>
+                            </div>
                         </div>
-                        <input
-                            type="checkbox"
-                            checked={settings.showResults}
-                            onChange={(e) => setSettings({ ...settings, showResults: e.target.checked })}
-                            className="h-5 w-5 text-blue-600 rounded focus:ring-blue-500"
-                        />
-                    </label>
+                    </div>
                 </div>
             </Card>
 
-            {/* Save Button */}
-            <div className="flex justify-end">
-                <Button onClick={handleSave} loading={loading}>
-                    <Save className="mr-2 h-4 w-4" />
-                    Save Settings
-                </Button>
-            </div>
-
-            {/* Current Session Info */}
+            {/* Important Notes */}
             <Card>
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                    <h4 className="font-semibold text-blue-900 mb-2">📚 Current Session Information</h4>
-                    <div className="text-sm text-blue-800 space-y-1">
-                        <p><strong>Academic Session:</strong> {settings.academicSession}</p>
-                        <p><strong>Current Term:</strong> {settings.currentTerm}</p>
-                        <p><strong>School:</strong> {settings.schoolName}</p>
-                    </div>
-                    <div className="mt-3 pt-3 border-t border-blue-200">
-                        <p className="text-xs text-blue-700">
-                            💡 <strong>Tip:</strong> Before starting a new term, archive current data in Archive Management
-                        </p>
+                <div className="p-6 bg-yellow-50">
+                    <div className="flex items-start gap-3">
+                        <Settings className="h-5 w-5 text-yellow-600 mt-0.5" />
+                        <div>
+                            <h3 className="font-semibold text-yellow-900 mb-2">Important Notes:</h3>
+                            <ul className="space-y-1 text-sm text-yellow-800">
+                                <li>• Changes to exam settings apply to new exam sessions</li>
+                                <li>• Students currently taking exams will not be affected</li>
+                                <li>• Academic session and term are displayed to students on login</li>
+                                <li>• Auto-save runs every 10 seconds during exams (hardcoded)</li>
+                                <li>• Fullscreen mode is enforced by the Electron app during exams</li>
+                            </ul>
+                        </div>
                     </div>
                 </div>
             </Card>
         </div>
     );
-};
-
-export default SystemSettings;
+}

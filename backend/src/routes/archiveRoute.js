@@ -57,7 +57,7 @@ router.post('/archive', async (req, res) => {
     }
 });
 
-// Reset for new term
+// ✅ FIXED: Reset for new term
 router.post('/reset', async (req, res) => {
     try {
         logAudit({
@@ -69,7 +69,8 @@ router.post('/reset', async (req, res) => {
             status: 'success'
         });
 
-        const result = await archiveService.resetForNewTerm();
+        // ✅ FIXED: Changed from resetForNewTerm() to resetDatabase()
+        const result = await archiveService.resetDatabase();
 
         logAudit({
             action: 'DATABASE_RESET_COMPLETED',

@@ -1,150 +1,190 @@
-// backend/src/routes/adminRoutes.js (DEBUG VERSION)
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Import all controllers
-const adminController = require('../controllers/adminController');
+let studentController, resultController, questionController, examController;
+let settingsController, dashboardController, auditController, monitoringController;
 
-// Settings Controller
-const settingsController = require('../controllers/settingsController');
+try {
+    studentController = require('../controllers/admin/studentController');
+} catch (err) {
+    console.log('⚠️  Admin studentController not found, skipping student routes');
+    studentController = null;
+}
 
-// Archive Controller
-const archiveController = require('../controllers/archiveController');
+try {
+    resultController = require('../controllers/admin/resultController');
+} catch (err) {
+    console.log('⚠️  Admin resultController not found, skipping result routes');
+    resultController = null;
+}
 
-console.log('🔍 DEBUG: Checking adminController exports...');
-console.log('Available functions:', Object.keys(adminController));
+try {
+    questionController = require('../controllers/admin/questionController');
+} catch (err) {
+    console.log('⚠️  questionController not found, skipping question routes');
+    questionController = null;
+}
 
-// Destructure after checking
-const {
-    createStudent,
-    bulkCreateStudents,
-    getClasses,
-    deleteStudentsByClass,
-    exportStudentsByClass,
-    uploadQuestions,
-    getAllQuestions,
-    activateExam,
-    getAllExams,
-    getExamById,
-    updateExam,
-    deleteExam,
-    getSubjects,
-    getClassResults,
-    exportClassResults,
-    getFilteredResults,
-    getDashboardStats,
-    getRecentSubmissions,
-    getActiveExamSessions,
-    getAuditLogs,
-    getAuditStats
-} = adminController;
+try {
+    examController = require('../controllers/admin/examController');
+} catch (err) {
+    console.log('⚠️  examController not found, skipping exam routes');
+    examController = null;
+}
 
-const {
-    getSystemSettings,
-    updateSystemSettings
-} = settingsController;
+try {
+    settingsController = require('../controllers/admin/settingsController');
+} catch (err) {
+    console.log('⚠️  settingsController not found, skipping settings routes');
+    settingsController = null;
+}
 
-const {
-    archiveTerm,
-    resetDatabase,
-    listArchives,
-    getArchivesPath
-} = archiveController;
+try {
+    dashboardController = require('../controllers/admin/dashboardController');
+} catch (err) {
+    console.log('⚠️  dashboardController not found, skipping dashboard routes');
+    dashboardController = null;
+}
 
-console.log('🔍 Checking specific functions:');
-console.log('  exportClassResults:', typeof exportClassResults);
-console.log('  getFilteredResults:', typeof getFilteredResults);
-console.log('  getClassResults:', typeof getClassResults);
+try {
+    auditController = require('../controllers/admin/auditController');
+} catch (err) {
+    console.log('⚠️  auditController not found, skipping audit routes');
+    auditController = null;
+}
 
-console.log('📝 Registering admin routes...');
+try {
+    monitoringController = require('../controllers/admin/monitoringController');
+} catch (err) {
+    console.log('⚠️  monitoringController not found, skipping monitoring routes');
+    monitoringController = null;
+}
 
-// ============================================
-// STUDENTS
-// ============================================
-console.log('📝 Registering student routes...');
-router.post('/students', createStudent);
-router.post('/students/bulk', upload.single('file'), bulkCreateStudents);
-router.get('/students/classes', getClasses);
-router.delete('/students/class', deleteStudentsByClass);
-router.get('/students/export/class', exportStudentsByClass);
-console.log('✅ Student routes registered');
+// ========================================
+// STUDENT MANAGEMENT
+// ========================================
+if (studentController) {
+    if (studentController.bulkCreateStudents) {
+        router.post('/students/bulk', upload.single('file'), studentController.bulkCreateStudents);
+    }
+    if (studentController.getClasses) {
+        router.get('/students/classes', studentController.getClasses);
+    }
+    if (studentController.deleteStudentsByClass) {
+        router.delete('/students/class', studentController.deleteStudentsByClass);
+    }
+    if (studentController.exportStudentsByClass) {
+        router.get('/students/export', studentController.exportStudentsByClass);
+    }
+}
 
-// ============================================
-// QUESTIONS & EXAMS
-// ============================================
-console.log('📝 Registering question routes...');
-router.post('/questions/upload', upload.single('file'), uploadQuestions);
-router.get('/questions', getAllQuestions);
-console.log('✅ Question routes registered');
-
-console.log('📝 Registering exam routes...');
-router.get('/exams', getAllExams);
-router.get('/exams/:id', getExamById);
-router.put('/exams/:id', updateExam);
-router.delete('/exams/:id', deleteExam);
-router.patch('/exams/activate', activateExam);
-console.log('✅ Exam routes registered');
-
-console.log('📝 Registering subject routes...');
-router.get('/subjects', getSubjects);
-console.log('✅ Subject routes registered');
-
-// ============================================
+// ========================================
 // RESULTS
-// ============================================
-console.log('📝 Registering result routes...');
-console.log('  About to register /results/class with', typeof getClassResults);
-console.log('  About to register /results/export with', typeof exportClassResults);
-console.log('  About to register /results/filtered with', typeof getFilteredResults);
+// ========================================
+if (resultController) {
+    if (resultController.getClassResults) {
+        router.get('/results/class', resultController.getClassResults);
+    }
+    if (resultController.exportResultsToDjango) {
+        router.get('/results/export-django', resultController.exportResultsToDjango);
+    }
+    if (resultController.exportClassResults) {
+        router.get('/results/export', resultController.exportClassResults);
+    }
+    if (resultController.getSubmissionDetails) {
+        router.get('/results/submission/:submissionId', resultController.getSubmissionDetails);
+    }
+}
 
-router.get('/results/class', getClassResults);
-router.get('/results/export', exportClassResults);
-router.get('/results/filtered', getFilteredResults);
-console.log('✅ Result routes registered');
+// ========================================
+// QUESTIONS
+// ========================================
+if (questionController) {
+    if (questionController.uploadQuestions) {
+        router.post('/questions/upload', upload.single('file'), questionController.uploadQuestions);
+    }
+    if (questionController.getAllQuestions) {
+        router.get('/questions', questionController.getAllQuestions);
+    }
+    if (questionController.deleteQuestion) {
+        router.delete('/questions/:id', questionController.deleteQuestion);
+    }
+    if (questionController.updateQuestion) {
+        router.put('/questions/:id', upload.single('file'), questionController.updateQuestion);
+    }
+}
 
-// ============================================
-// DASHBOARD
-// ============================================
-console.log('📝 Registering dashboard routes...');
-router.get('/dashboard/stats', getDashboardStats);
-router.get('/dashboard/recent-submissions', getRecentSubmissions);
-console.log('✅ Dashboard routes registered');
+// ========================================
+// EXAMS
+// ========================================
+if (examController) {
+    if (examController.getAllExams) {
+        router.get('/exams', examController.getAllExams);
+    }
+    if (examController.getExamById) {
+        router.get('/exams/:id', examController.getExamById);
+    }
+    if (examController.updateExam) {
+        router.put('/exams/:id', examController.updateExam);
+    }
+    if (examController.deleteExam) {
+        router.delete('/exams/:id', examController.deleteExam);
+    }
+    if (examController.activateExam) {
+        router.patch('/exams/activate', examController.activateExam);
+    }
+    if (examController.getSubjects) {
+        router.get('/subjects', examController.getSubjects);
+    }
+}
 
-// ============================================
-// MONITORING
-// ============================================
-console.log('📝 Registering monitoring routes...');
-router.get('/monitoring/sessions', getActiveExamSessions);
-console.log('✅ Monitoring routes registered');
-
-// ============================================
-// AUDIT LOGS
-// ============================================
-console.log('📝 Registering audit routes...');
-router.get('/audit-logs', getAuditLogs);
-router.get('/audit-logs/stats', getAuditStats);
-console.log('✅ Audit routes registered');
-
-// ============================================
+// ========================================
 // SETTINGS
-// ============================================
-console.log('📝 Registering settings routes...');
-router.get('/settings', getSystemSettings);
-router.put('/settings', updateSystemSettings);
-console.log('✅ Settings routes registered');
+// ========================================
+if (settingsController) {
+    if (settingsController.getSettings) {
+        router.get('/settings', settingsController.getSettings);
+    }
+    if (settingsController.updateSettings) {
+        router.put('/settings', settingsController.updateSettings);
+    }
+}
 
-// ============================================
-// ARCHIVE
-// ============================================
-console.log('📝 Registering archive routes...');
-router.post('/archive/archive', archiveTerm);
-router.post('/archive/reset', resetDatabase);
-router.get('/archive/list', listArchives);
-router.get('/archive/path', getArchivesPath);
-console.log('✅ Archive routes registered');
+// ========================================
+// DASHBOARD
+// ========================================
+if (dashboardController) {
+    if (dashboardController.getStats) {
+        router.get('/dashboard/stats', dashboardController.getStats);
+    }
+    if (dashboardController.getRecentSubmissions) {
+        router.get('/dashboard/recent-submissions', dashboardController.getRecentSubmissions);
+    }
+}
 
-console.log('✅ ALL ADMIN ROUTES LOADED');
+// ========================================
+// MONITORING - ✅ FIXED: Use correct function name
+// ========================================
+if (monitoringController) {
+    if (monitoringController.getActiveExamSessions) {  // ✅ FIXED: Changed from getActiveSessions
+        router.get('/monitoring/sessions', monitoringController.getActiveExamSessions);
+    }
+}
+
+// ========================================
+// AUDIT
+// ========================================
+if (auditController) {
+    if (auditController.getAuditLogs) {
+        router.get('/audit-logs', auditController.getAuditLogs);
+    }
+    if (auditController.getAuditStats) {
+        router.get('/audit-logs/stats', auditController.getAuditStats);
+    }
+}
+
+console.log('✅ Admin routes loaded');
 
 module.exports = router;

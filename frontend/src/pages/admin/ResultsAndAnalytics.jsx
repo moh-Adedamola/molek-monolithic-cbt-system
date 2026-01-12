@@ -1,670 +1,385 @@
 import { useState, useEffect } from 'react';
-import { Download, FileText, Filter, TrendingUp, Users, Award, X } from 'lucide-react';
-import { getClassResults, exportClassResultsAsText, getSubjects, getSystemSettings } from '../../services/api';
-import Alert from '../../components/common/Alert';
-import Card from '../../components/common/Card';
+import { Download, FileText, Filter, Users, TrendingUp, Award, Loader2 } from 'lucide-react';
 import Button from '../../components/common/Button';
-import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-
-const CLASS_LEVELS = ['JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3'];
-const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+import Card from '../../components/common/Card';
+import Select from '../../components/common/Select';
+import Table from '../../components/common/Table';
+import Alert from '../../components/common/Alert';
+import { getClassResults, exportResultsToDjango, exportClassResults, getSubjects } from '../../services/api';
 
 export default function ResultsAndAnalytics() {
-    const [activeTab, setActiveTab] = useState('results');
-    const [selectedClass, setSelectedClass] = useState('');
-    const [selectedSubject, setSelectedSubject] = useState('');
     const [results, setResults] = useState([]);
-    const [analytics, setAnalytics] = useState(null);
+    const [subjects, setSubjects] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [exporting, setExporting] = useState(false);
     const [alert, setAlert] = useState(null);
-    const [subjectsByClass, setSubjectsByClass] = useState({});
-    const [allSubjects, setAllSubjects] = useState([]);
+
+    const [filters, setFilters] = useState({
+        class: '',
+        subject: ''
+    });
+
+    const classLevels = [
+        { value: '', label: 'All Classes' },
+        { value: 'JSS1', label: 'JSS1' },
+        { value: 'JSS2', label: 'JSS2' },
+        { value: 'JSS3', label: 'JSS3' },
+        { value: 'SS1', label: 'SS1' },
+        { value: 'SS2', label: 'SS2' },
+        { value: 'SS3', label: 'SS3' }
+    ];
 
     useEffect(() => {
         loadSubjects();
     }, []);
 
+    useEffect(() => {
+        loadResults();
+    }, [filters]);
+
     const loadSubjects = async () => {
         try {
             const res = await getSubjects();
-            const subjects = res.data?.subjects || {};
-            setSubjectsByClass(subjects);
-
-            // Get unique list of all subjects across all classes
-            const uniqueSubjects = [...new Set(Object.values(subjects).flat())];
-            setAllSubjects(uniqueSubjects.sort());
-
-            console.log('📚 Loaded subjects by class:', subjects);
-            console.log('📚 All unique subjects:', uniqueSubjects);
-            console.log('📚 Subject state set!');
+            const subjectList = res.data.subjects || [];
+            setSubjects([
+                { value: '', label: 'All Subjects' },
+                ...subjectList.map(s => ({ value: s, label: s }))
+            ]);
         } catch (error) {
-            console.error('❌ Failed to load subjects:', error);
+            console.error('Failed to load subjects:', error);
         }
     };
 
-    const handleLoadResults = async () => {
-        setLoading(true);
-        setAlert(null);
-
+    const loadResults = async () => {
         try {
-            // ✅ FIX: Convert empty strings to null
-            const classParam = selectedClass && selectedClass.trim() !== '' ? selectedClass : null;
-            const subjectParam = selectedSubject && selectedSubject.trim() !== '' ? selectedSubject : null;
-
-            console.log('🔍 Loading with filters:', {
-                selectedClass,
-                selectedSubject,
-                classParam,
-                subjectParam
-            });
-
-            const res = await getClassResults(classParam, subjectParam);
-
-            console.log('📦 Received results:', res.data.results?.length || 0);
-
-            if (!res.data.results || res.data.results.length === 0) {
-                setAlert({
-                    type: 'info',
-                    message: 'No results found for the selected filters.'
-                });
-                setResults([]);
-                setAnalytics(null);
-                return;
-            }
-
-            // ✅ FIX: Filter out incomplete submissions (null scores)
-            const completeResults = res.data.results.filter(r => {
-                const isComplete = r.score !== null &&
-                    r.score !== undefined &&
-                    r.total_questions !== null &&
-                    r.total_questions !== undefined &&
-                    r.total_questions > 0;
-
-                if (!isComplete) {
-                    console.log('⚠️ Skipping incomplete:', r.subject, r.first_name);
-                }
-
-                return isComplete;
-            });
-
-            console.log('✅ Complete results:', completeResults.length);
-
-            if (completeResults.length === 0) {
-                setAlert({
-                    type: 'warning',
-                    message: `Found ${res.data.results.length} submission(s) but none are completed yet.`
-                });
-                setResults([]);
-                setAnalytics(null);
-                return;
-            }
-
-            setResults(completeResults);
-            calculateAnalytics(completeResults);
-
-            let filterMsg = 'All Results';
-            if (classParam && subjectParam) {
-                filterMsg = `${classParam} - ${subjectParam}`;
-            } else if (classParam) {
-                filterMsg = `${classParam} (All Subjects)`;
-            } else if (subjectParam) {
-                filterMsg = `${subjectParam} (All Classes)`;
-            }
-
-            setAlert({
-                type: 'success',
-                message: `Loaded ${completeResults.length} completed result(s) for: ${filterMsg}`
-            });
+            setLoading(true);
+            const res = await getClassResults(filters.class, filters.subject);
+            setResults(res.data.results || []);
         } catch (error) {
-            console.error('❌ Load results error:', error);
-            setAlert({
-                type: 'error',
-                message: error.response?.data?.error || 'Failed to load results'
-            });
+            console.error('Failed to load results:', error);
+            setAlert({ type: 'error', message: 'Failed to load results' });
         } finally {
             setLoading(false);
         }
     };
 
-    const calculateAnalytics = (data) => {
-        console.log('📊 calculateAnalytics called with:', data.length, 'results');
+    const handleExportToDjango = async () => {
+        try {
+            setExporting(true);
+            setAlert(null);
 
-        if (!data || data.length === 0) {
-            setAnalytics(null);
-            return;
-        }
-
-        // ✅ FIX: Double-check for valid data
-        const validData = data.filter(r => {
-            const isValid = r.score != null &&
-                r.score !== undefined &&
-                r.total_questions != null &&
-                r.total_questions !== undefined &&
-                r.total_questions > 0;
-
-            if (!isValid) {
-                console.log('⚠️ Invalid data in analytics:', r);
+            if (results.length === 0) {
+                setAlert({ type: 'error', message: 'No results to export' });
+                return;
             }
 
-            return isValid;
-        });
+            const response = await exportResultsToDjango(filters.class, filters.subject);
 
-        console.log('✅ Valid data for analytics:', validData.length);
+            // Create download link
+            const blob = new Blob([response.data], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
 
-        if (validData.length === 0) {
-            setAnalytics(null);
-            return;
-        }
+            const filename = filters.class && filters.subject
+                ? `${filters.class}_${filters.subject}_for_django.csv`
+                : 'exam_results_for_django.csv';
 
-        const totalStudents = validData.length;
-        const avgScore = Math.round(
-            validData.reduce((sum, r) => sum + ((r.score / r.total_questions) * 100), 0) / totalStudents
-        );
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
 
-        const passCount = validData.filter(r => ((r.score / r.total_questions) * 100) >= 50).length;
-        const passRate = Math.round((passCount / totalStudents) * 100);
-
-        const excellenceCount = validData.filter(r => ((r.score / r.total_questions) * 100) >= 70).length;
-        const excellenceRate = Math.round((excellenceCount / totalStudents) * 100);
-
-        // ✅ FIX: Subject performance - group ALL subjects
-        const subjectPerformance = {};
-        validData.forEach(r => {
-            const subject = r.subject || 'Unknown';
-            if (!subjectPerformance[subject]) {
-                subjectPerformance[subject] = { total: 0, scores: [] };
-            }
-            subjectPerformance[subject].total++;
-            const percentage = (r.score / r.total_questions) * 100;
-            subjectPerformance[subject].scores.push(percentage);
-
-            console.log('📝 Adding to', subject, ':', percentage.toFixed(1) + '%');
-        });
-
-        console.log('📊 Subject Performance:', subjectPerformance);
-
-        const subjectChartData = Object.entries(subjectPerformance).map(([subject, data]) => {
-            const average = Math.round(data.scores.reduce((a, b) => a + b, 0) / data.scores.length);
-            console.log('📈 Chart data for', subject, ':', average + '%');
-            return {
-                subject,
-                average,
-                students: data.total
-            };
-        });
-
-        console.log('📊 Final chart data:', subjectChartData);
-
-        // Grade distribution
-        const gradeDistribution = { A: 0, B: 0, C: 0, D: 0, F: 0 };
-        validData.forEach(r => {
-            const percentage = (r.score / r.total_questions) * 100;
-            if (percentage >= 70) gradeDistribution.A++;
-            else if (percentage >= 60) gradeDistribution.B++;
-            else if (percentage >= 50) gradeDistribution.C++;
-            else if (percentage >= 40) gradeDistribution.D++;
-            else gradeDistribution.F++;
-        });
-
-        const gradeChartData = Object.entries(gradeDistribution)
-            .filter(([_, count]) => count > 0)
-            .map(([grade, count]) => ({ grade, count }));
-
-        console.log('✅ Analytics completed:', {
-            totalStudents,
-            avgScore,
-            subjects: Object.keys(subjectPerformance),
-            chartDataPoints: subjectChartData.length
-        });
-
-        setAnalytics({
-            totalStudents,
-            averageScore: avgScore,
-            passRate,
-            passCount,
-            excellenceRate,
-            excellenceCount,
-            subjectChartData,
-            gradeChartData
-        });
-    };
-
-    const handleExportText = async () => {
-        if (!selectedClass || !selectedSubject) {
+            setAlert({
+                type: 'success',
+                message: 'Results exported successfully! Upload this CSV to Django backend.'
+            });
+        } catch (error) {
+            console.error('Export to Django error:', error);
             setAlert({
                 type: 'error',
-                message: 'Please select both Class and Subject for text export'
+                message: error.response?.data?.error || 'Failed to export results'
             });
-            return;
-        }
-
-        try {
-            const response = await exportClassResultsAsText(selectedClass, selectedSubject);
-            const blob = new Blob([response.data], { type: 'text/plain' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `${selectedClass}_${selectedSubject}_results.txt`;
-            a.click();
-            window.URL.revokeObjectURL(url);
-            setAlert({ type: 'success', message: 'Text file exported successfully' });
-        } catch (error) {
-            setAlert({ type: 'error', message: 'Failed to export text file' });
+        } finally {
+            setExporting(false);
         }
     };
 
-    const handleExportCSV = async () => {
-        if (results.length === 0) {
-            setAlert({ type: 'error', message: 'No results to export' });
-            return;
-        }
-
+    const handleExportReport = async () => {
         try {
-            const settings = await getSystemSettings();
-            const settingsData = settings.data.settings;
-
-            const csv = [
-                ['EXAM RESULTS'],
-                [`School: ${settingsData.schoolName}`],
-                [`Academic Session: ${settingsData.academicSession}`],
-                [`Term: ${settingsData.currentTerm}`],
-                [`Filter: ${selectedClass || 'All Classes'} - ${selectedSubject || 'All Subjects'}`],
-                [`Generated: ${new Date().toLocaleString()}`],
-                [''],
-                ['STUDENT RESULTS'],
-                ['Name', 'Exam Code', 'Class', 'Subject', 'Score', 'Total', 'Percentage', 'Grade', 'Submitted At'].join(','),
-                ...results.map(r => {
-                    const fullName = `${r.first_name} ${r.middle_name || ''} ${r.last_name}`.trim();
-                    const percentage = Math.round((r.score / r.total_questions) * 100);
-                    const grade = percentage >= 70 ? 'A' :
-                        percentage >= 60 ? 'B' :
-                            percentage >= 50 ? 'C' :
-                                percentage >= 40 ? 'D' : 'F';
-                    return [
-                        `"${fullName}"`,
-                        r.exam_code,
-                        r.class,
-                        r.subject,
-                        r.score,
-                        r.total_questions,
-                        `${percentage}%`,
-                        grade,
-                        new Date(r.submitted_at).toLocaleString()
-                    ].join(',');
-                })
-            ];
-
-            if (analytics) {
-                csv.push(
-                    [''],
-                    ['SUMMARY STATISTICS'],
-                    ['Total Students', analytics.totalStudents],
-                    ['Average Score', `${analytics.averageScore}%`],
-                    ['Pass Rate', `${analytics.passRate}%`],
-                    ['Excellence Rate', `${analytics.excellenceRate}%`]
-                );
+            if (!filters.class || !filters.subject) {
+                setAlert({
+                    type: 'error',
+                    message: 'Please select both class and subject for text report export'
+                });
+                return;
             }
 
-            const blob = new Blob([csv.join('\n')], { type: 'text/csv' });
+            const response = await exportClassResults(filters.class, filters.subject);
+
+            // Create download link
+            const blob = new Blob([response.data], { type: 'text/plain' });
             const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            const filename = `results_${selectedClass || 'all'}_${selectedSubject || 'all'}_${new Date().toISOString().split('T')[0]}.csv`;
-            a.download = filename;
-            a.click();
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `${filters.class}_${filters.subject}_report.txt`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
             window.URL.revokeObjectURL(url);
 
-            setAlert({ type: 'success', message: 'CSV exported successfully' });
+            setAlert({ type: 'success', message: 'Report exported successfully' });
         } catch (error) {
-            console.error('Export CSV error:', error);
-            setAlert({ type: 'error', message: 'Failed to export CSV' });
+            console.error('Export report error:', error);
+            setAlert({ type: 'error', message: 'Failed to export report' });
         }
     };
 
-    const handleClearFilters = () => {
-        setSelectedClass('');
-        setSelectedSubject('');
-        setResults([]);
-        setAnalytics(null);
+    const calculateStats = () => {
+        if (results.length === 0) return null;
+
+        const totalStudents = results.length;
+        const scores = results.map(r => {
+            const totalPoints = r.total_possible_points || r.total_questions;
+            return (r.score / totalPoints) * 100;
+        });
+
+        const average = scores.reduce((a, b) => a + b, 0) / totalStudents;
+        const passed = scores.filter(s => s >= 50).length;
+        const excellent = scores.filter(s => s >= 70).length;
+        const highest = Math.max(...scores);
+        const lowest = Math.min(...scores);
+
+        return {
+            totalStudents,
+            average: Math.round(average),
+            passRate: Math.round((passed / totalStudents) * 100),
+            excellenceRate: Math.round((excellent / totalStudents) * 100),
+            highest: Math.round(highest),
+            lowest: Math.round(lowest)
+        };
     };
 
-    const getAvailableSubjects = () => {
-        if (selectedClass && subjectsByClass[selectedClass]) {
-            return subjectsByClass[selectedClass];
+    const stats = calculateStats();
+
+    const columns = [
+        {
+            key: 'admission_number',
+            label: 'Admission No.',
+            render: (val) => <span className="font-mono">{val}</span>
+        },
+        {
+            key: 'first_name',
+            label: 'Name',
+            render: (val, row) => {
+                const fullName = `${row.first_name} ${row.middle_name || ''} ${row.last_name}`.trim();
+                return <span className="font-medium">{fullName}</span>;
+            }
+        },
+        {
+            key: 'class',
+            label: 'Class',
+            render: (val) => <span className="font-semibold">{val}</span>
+        },
+        {
+            key: 'subject',
+            label: 'Subject'
+        },
+        {
+            key: 'score',
+            label: 'Score',
+            render: (val, row) => {
+                const totalPoints = row.total_possible_points || row.total_questions;
+                const percentage = Math.round((val / totalPoints) * 100);
+                return (
+                    <div>
+                        <span className="font-semibold">{val}/{totalPoints}</span>
+                        <span className="text-sm text-gray-600 ml-2">({percentage}%)</span>
+                    </div>
+                );
+            }
+        },
+        {
+            key: 'submitted_at',
+            label: 'Submitted',
+            render: (val) => new Date(val).toLocaleString()
         }
-        return allSubjects;
-    };
+    ];
 
     return (
         <div className="space-y-6">
+            <div className="flex items-center justify-between">
+                <div>
+                    <h1 className="text-3xl font-bold text-gray-900">Results & Analytics</h1>
+                    <p className="text-gray-600 mt-1">View and export exam results</p>
+                </div>
+            </div>
+
             {alert && (
-                <Alert type={alert.type} message={alert.message} onClose={() => setAlert(null)} />
+                <Alert
+                    type={alert.type}
+                    message={alert.message}
+                    onClose={() => setAlert(null)}
+                />
             )}
-
-            <div>
-                <h1 className="text-2xl font-bold text-gray-900">Results & Analytics</h1>
-                <p className="mt-1 text-sm text-gray-600">
-                    View, analyze, and export exam results with flexible filtering
-                </p>
-            </div>
-
-            {/* Tabs */}
-            <div className="border-b border-gray-200">
-                <nav className="-mb-px flex space-x-8">
-                    <button
-                        onClick={() => setActiveTab('results')}
-                        className={`${
-                            activeTab === 'results'
-                                ? 'border-blue-500 text-blue-600'
-                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                        } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-                    >
-                        View Results
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('analytics')}
-                        className={`${
-                            activeTab === 'analytics'
-                                ? 'border-blue-500 text-blue-600'
-                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                        } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm`}
-                        disabled={!analytics}
-                    >
-                        Analytics
-                    </button>
-                </nav>
-            </div>
 
             {/* Filters */}
             <Card>
-                <div className="flex items-center gap-2 mb-4">
-                    <Filter className="h-5 w-5 text-gray-600" />
-                    <h3 className="font-semibold text-gray-900">Filters</h3>
-                    {(selectedClass || selectedSubject) && (
-                        <button
-                            onClick={handleClearFilters}
-                            className="ml-auto text-sm text-gray-600 hover:text-gray-900 flex items-center gap-1"
-                        >
-                            <X className="h-4 w-4" />
-                            Clear Filters
-                        </button>
-                    )}
+                <div className="p-6">
+                    <div className="flex items-center gap-3 mb-4">
+                        <Filter className="h-5 w-5 text-blue-600" />
+                        <h2 className="text-lg font-semibold text-gray-900">Filters</h2>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <Select
+                            label="Class"
+                            value={filters.class}
+                            onChange={(e) => setFilters({ ...filters, class: e.target.value })}
+                            options={classLevels}
+                        />
+                        <Select
+                            label="Subject"
+                            value={filters.subject}
+                            onChange={(e) => setFilters({ ...filters, subject: e.target.value })}
+                            options={subjects}
+                        />
+                    </div>
                 </div>
+            </Card>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Class (Optional)
-                        </label>
-                        <select
-                            value={selectedClass}
-                            onChange={(e) => {
-                                setSelectedClass(e.target.value);
-                                // Clear subject if selected class doesn't have it
-                                if (e.target.value && subjectsByClass[e.target.value] &&
-                                    selectedSubject && !subjectsByClass[e.target.value].includes(selectedSubject)) {
-                                    setSelectedSubject('');
-                                }
-                            }}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                        >
-                            <option value="">All Classes</option>
-                            {CLASS_LEVELS.map(cls => (
-                                <option key={cls} value={cls}>{cls}</option>
-                            ))}
-                        </select>
+            {/* Statistics */}
+            {stats && (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <Card>
+                        <div className="p-4">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-blue-100 rounded-lg">
+                                    <Users className="h-6 w-6 text-blue-600" />
+                                </div>
+                                <div>
+                                    <p className="text-sm text-gray-600">Total Students</p>
+                                    <p className="text-2xl font-bold text-gray-900">{stats.totalStudents}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </Card>
+                    <Card>
+                        <div className="p-4">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-green-100 rounded-lg">
+                                    <TrendingUp className="h-6 w-6 text-green-600" />
+                                </div>
+                                <div>
+                                    <p className="text-sm text-gray-600">Average Score</p>
+                                    <p className="text-2xl font-bold text-gray-900">{stats.average}%</p>
+                                </div>
+                            </div>
+                        </div>
+                    </Card>
+                    <Card>
+                        <div className="p-4">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-purple-100 rounded-lg">
+                                    <Award className="h-6 w-6 text-purple-600" />
+                                </div>
+                                <div>
+                                    <p className="text-sm text-gray-600">Pass Rate</p>
+                                    <p className="text-2xl font-bold text-gray-900">{stats.passRate}%</p>
+                                </div>
+                            </div>
+                        </div>
+                    </Card>
+                    <Card>
+                        <div className="p-4">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-yellow-100 rounded-lg">
+                                    <Award className="h-6 w-6 text-yellow-600" />
+                                </div>
+                                <div>
+                                    <p className="text-sm text-gray-600">Excellence</p>
+                                    <p className="text-2xl font-bold text-gray-900">{stats.excellenceRate}%</p>
+                                </div>
+                            </div>
+                        </div>
+                    </Card>
+                </div>
+            )}
+
+            {/* Export Actions */}
+            <Card>
+                <div className="p-6">
+                    <div className="flex items-center gap-3 mb-4">
+                        <Download className="h-5 w-5 text-blue-600" />
+                        <h2 className="text-lg font-semibold text-gray-900">Export Options</h2>
                     </div>
-
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Subject (Optional)
-                        </label>
-                        <select
-                            value={selectedSubject}
-                            onChange={(e) => {
-                                const newSubject = e.target.value;
-                                console.log('📝 Subject dropdown changed to:', newSubject);
-                                console.log('📝 Current state - selectedClass:', selectedClass);
-                                console.log('📝 Available subjects:', getAvailableSubjects());
-                                setSelectedSubject(newSubject);
-                            }}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                        >
-                            <option value="">All Subjects</option>
-                            {getAvailableSubjects().map(subj => (
-                                <option key={subj} value={subj}>{subj}</option>
-                            ))}
-                        </select>
-                        {selectedClass && getAvailableSubjects().length > 0 && (
-                            <p className="text-xs text-gray-500 mt-1">
-                                {getAvailableSubjects().length} subject(s) available
-                                {selectedSubject && selectedSubject !== '' && ` | Selected: ${selectedSubject}`}
-                            </p>
-                        )}
-                        {!selectedClass && allSubjects.length > 0 && (
-                            <p className="text-xs text-gray-500 mt-1">
-                                Showing all {allSubjects.length} subjects from all classes
-                            </p>
-                        )}
-                    </div>
-
-                    <div className="flex items-end">
+                    <div className="flex flex-wrap gap-3">
                         <Button
-                            onClick={handleLoadResults}
-                            loading={loading}
-                            className="w-full"
+                            variant="primary"
+                            onClick={handleExportToDjango}
+                            disabled={exporting || results.length === 0}
                         >
-                            Generate Report
+                            {exporting ? (
+                                <>
+                                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                    Exporting...
+                                </>
+                            ) : (
+                                <>
+                                    <Download className="h-4 w-4 mr-2" />
+                                    Export to Django (CSV)
+                                </>
+                            )}
+                        </Button>
+                        <Button
+                            variant="outline"
+                            onClick={handleExportReport}
+                            disabled={!filters.class || !filters.subject || results.length === 0}
+                        >
+                            <FileText className="h-4 w-4 mr-2" />
+                            Export Text Report
                         </Button>
                     </div>
-                </div>
-
-                <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-                    <p className="text-sm text-blue-800">
-                        💡 <strong>Tip:</strong> You can filter by class only, subject only, both, or leave both empty to see all results
+                    <p className="text-sm text-gray-600 mt-3">
+                        Export to Django: CSV format for importing to Django backend (includes CA score calculation)
                     </p>
                 </div>
             </Card>
 
-            {/* Results Tab */}
-            {activeTab === 'results' && results.length > 0 && (
-                <>
-                    {/* Quick Stats */}
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                        <Card>
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-gray-600">Total Students</p>
-                                    <p className="text-2xl font-bold text-gray-900">{analytics?.totalStudents || 0}</p>
-                                </div>
-                                <Users className="h-10 w-10 text-blue-600" />
-                            </div>
-                        </Card>
+            {/* Results Table */}
+            <Card>
+                <div className="p-6">
+                    <h2 className="text-lg font-semibold text-gray-900 mb-4">Results</h2>
+                    <Table
+                        columns={columns}
+                        data={results}
+                        loading={loading}
+                        emptyMessage="No results found. Select filters above to view results."
+                    />
+                </div>
+            </Card>
 
-                        <Card>
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-gray-600">Average Score</p>
-                                    <p className="text-2xl font-bold text-gray-900">{analytics?.averageScore || 0}%</p>
-                                </div>
-                                <TrendingUp className="h-10 w-10 text-green-600" />
-                            </div>
-                        </Card>
-
-                        <Card>
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-gray-600">Pass Rate</p>
-                                    <p className="text-2xl font-bold text-gray-900">{analytics?.passRate || 0}%</p>
-                                </div>
-                                <Award className="h-10 w-10 text-purple-600" />
-                            </div>
-                        </Card>
-
-                        <Card>
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-sm text-gray-600">Excellence Rate</p>
-                                    <p className="text-2xl font-bold text-gray-900">{analytics?.excellenceRate || 0}%</p>
-                                </div>
-                                <Award className="h-10 w-10 text-yellow-600" />
-                            </div>
-                        </Card>
-                    </div>
-
-                    {/* Export Buttons */}
-                    <Card>
-                        <div className="flex flex-wrap gap-3">
-                            <Button onClick={handleExportCSV} variant="secondary">
-                                <Download className="h-4 w-4 mr-2" />
-                                Export CSV
-                            </Button>
-                            <Button
-                                onClick={handleExportText}
-                                variant="secondary"
-                                disabled={!selectedClass || !selectedSubject}
-                            >
-                                <FileText className="h-4 w-4 mr-2" />
-                                Export Text
-                                {(!selectedClass || !selectedSubject) && (
-                                    <span className="text-xs ml-2">(Requires both filters)</span>
-                                )}
-                            </Button>
-                        </div>
-                    </Card>
-
-                    {/* Results Table */}
-                    <Card>
-                        <h3 className="font-semibold text-gray-900 mb-4">Results</h3>
-                        <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y divide-gray-200">
-                                <thead className="bg-gray-50">
-                                <tr>
-                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Student</th>
-                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Class</th>
-                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
-                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Score</th>
-                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Percentage</th>
-                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Grade</th>
-                                </tr>
-                                </thead>
-                                <tbody className="bg-white divide-y divide-gray-200">
-                                {results.map((result, idx) => {
-                                    const fullName = `${result.first_name} ${result.middle_name || ''} ${result.last_name}`.trim();
-                                    const percentage = Math.round((result.score / result.total_questions) * 100);
-                                    const grade = percentage >= 70 ? 'A' :
-                                        percentage >= 60 ? 'B' :
-                                            percentage >= 50 ? 'C' :
-                                                percentage >= 40 ? 'D' : 'F';
-                                    return (
-                                        <tr key={idx}>
-                                            <td className="px-4 py-3 text-sm text-gray-900">{fullName}</td>
-                                            <td className="px-4 py-3 text-sm text-gray-600">{result.class}</td>
-                                            <td className="px-4 py-3 text-sm text-gray-600">{result.subject}</td>
-                                            <td className="px-4 py-3 text-sm text-gray-900">{result.score}/{result.total_questions}</td>
-                                            <td className="px-4 py-3 text-sm text-gray-900">{percentage}%</td>
-                                            <td className="px-4 py-3">
-                                                    <span className={`px-2 py-1 text-xs font-semibold rounded ${
-                                                        grade === 'A' ? 'bg-green-100 text-green-800' :
-                                                            grade === 'B' ? 'bg-blue-100 text-blue-800' :
-                                                                grade === 'C' ? 'bg-yellow-100 text-yellow-800' :
-                                                                    grade === 'D' ? 'bg-orange-100 text-orange-800' :
-                                                                        'bg-red-100 text-red-800'
-                                                    }`}>
-                                                        {grade}
-                                                    </span>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                                </tbody>
-                            </table>
-                        </div>
-                    </Card>
-                </>
-            )}
-
-            {/* Analytics Tab */}
-            {activeTab === 'analytics' && analytics && (
-                <>
-                    {/* Summary Cards */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                        <Card>
-                            <p className="text-sm text-gray-600 mb-1">Total Students</p>
-                            <p className="text-3xl font-bold text-blue-600">{analytics.totalStudents}</p>
-                        </Card>
-                        <Card>
-                            <p className="text-sm text-gray-600 mb-1">Average Score</p>
-                            <p className="text-3xl font-bold text-green-600">{analytics.averageScore}%</p>
-                        </Card>
-                        <Card>
-                            <p className="text-sm text-gray-600 mb-1">Passed (≥50%)</p>
-                            <p className="text-3xl font-bold text-purple-600">{analytics.passCount}/{analytics.totalStudents}</p>
-                            <p className="text-xs text-gray-500 mt-1">{analytics.passRate}% pass rate</p>
-                        </Card>
-                        <Card>
-                            <p className="text-sm text-gray-600 mb-1">Excellent (≥70%)</p>
-                            <p className="text-3xl font-bold text-yellow-600">{analytics.excellenceCount}/{analytics.totalStudents}</p>
-                            <p className="text-xs text-gray-500 mt-1">{analytics.excellenceRate}% excellence rate</p>
-                        </Card>
-                    </div>
-
-                    {/* Charts */}
-                    {analytics.subjectChartData.length > 0 && (
-                        <Card>
-                            <h3 className="font-semibold text-gray-900 mb-4">Subject Performance</h3>
-                            <ResponsiveContainer width="100%" height={300}>
-                                <BarChart data={analytics.subjectChartData}>
-                                    <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="subject" />
-                                    <YAxis domain={[0, 100]} />
-                                    <Tooltip />
-                                    <Legend />
-                                    <Bar dataKey="average" fill="#3b82f6" name="Average Score (%)" />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        </Card>
-                    )}
-
-                    {analytics.gradeChartData.length > 0 && (
-                        <Card>
-                            <h3 className="font-semibold text-gray-900 mb-4">Grade Distribution</h3>
-                            <ResponsiveContainer width="100%" height={300}>
-                                <PieChart>
-                                    <Pie
-                                        data={analytics.gradeChartData}
-                                        cx="50%"
-                                        cy="50%"
-                                        labelLine={false}
-                                        label={({ grade, count }) => `${grade}: ${count}`}
-                                        outerRadius={100}
-                                        fill="#8884d8"
-                                        dataKey="count"
-                                    >
-                                        {analytics.gradeChartData.map((entry, index) => (
-                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                        ))}
-                                    </Pie>
-                                    <Tooltip />
-                                </PieChart>
-                            </ResponsiveContainer>
-                        </Card>
-                    )}
-                </>
-            )}
-
-            {/* Empty State */}
-            {results.length === 0 && !loading && (
-                <Card>
-                    <div className="text-center py-12">
-                        <FileText className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-                        <h3 className="text-lg font-medium text-gray-900 mb-2">No Results Yet</h3>
-                        <p className="text-gray-600 mb-4">
-                            Select your filters and click "Load Results" to view exam results and analytics
-                        </p>
-                    </div>
-                </Card>
-            )}
+            {/* Info Box */}
+            <Card>
+                <div className="p-6 bg-blue-50">
+                    <h3 className="font-semibold text-blue-900 mb-2">Django Import Instructions:</h3>
+                    <ol className="list-decimal list-inside space-y-1 text-sm text-blue-800">
+                        <li>Export results using "Export to Django (CSV)" button</li>
+                        <li>Log in to your Django admin panel</li>
+                        <li>Navigate to Exam Results → Bulk Upload</li>
+                        <li>Upload the downloaded CSV file</li>
+                        <li>Django will automatically:
+                            <ul className="list-disc list-inside ml-6 mt-1">
+                                <li>Look up students by admission number</li>
+                                <li>Look up subjects by name</li>
+                                <li>Fetch CA scores for the current session/term</li>
+                                <li>Calculate total score (CA + Exam)</li>
+                                <li>Generate grades and statistics</li>
+                            </ul>
+                        </li>
+                    </ol>
+                </div>
+            </Card>
         </div>
     );
 }
