@@ -114,8 +114,29 @@ class ArchiveService {
 
             console.log(`✅ Archive created: ${archiveName}`);
 
+            // ============================================
+            // CLEAR DATABASE AFTER ARCHIVING
+            // ============================================
+            console.log('🗑️  Clearing database after archive...');
+            
+            const { run } = require('../utils/db');
+
+            // Clear all tables (questions first due to foreign key)
+            await run('DELETE FROM questions');
+            await run('DELETE FROM exams');
+            await run('DELETE FROM exam_sessions');
+            await run('DELETE FROM submissions');
+            await run('DELETE FROM students');
+            await run('DELETE FROM audit_logs');
+            
+            // Reset auto-increment counters
+            await run("DELETE FROM sqlite_sequence WHERE name IN ('students', 'exams', 'questions', 'submissions', 'exam_sessions', 'audit_logs')");
+            
+            console.log('✅ Database cleared - ready for new term!');
+
             return {
                 success: true,
+                message: `Term "${termName}" archived and database cleared for new term`,
                 archiveName,
                 archivePath,
                 stats: {
@@ -265,39 +286,50 @@ Total Submissions: ${data.submissions.length}
      */
     async resetDatabase() {
         try {
-            console.log('🗑️  Resetting database for new term...');
+            console.log('🗑️  Resetting database - FULL CLEAR...');
 
             const { run } = require('../utils/db');
 
-            // Clear students table
-            await run('DELETE FROM students');
-            console.log('   ✅ Students cleared');
+            // Clear questions first (has foreign key to exams)
+            await run('DELETE FROM questions');
+            console.log('   ✅ Questions cleared');
 
-            // Clear submissions table
+            // Clear exams
+            await run('DELETE FROM exams');
+            console.log('   ✅ Exams cleared');
+
+            // Clear exam sessions
+            await run('DELETE FROM exam_sessions');
+            console.log('   ✅ Exam sessions cleared');
+
+            // Clear submissions
             await run('DELETE FROM submissions');
             console.log('   ✅ Submissions cleared');
 
-            // Clear audit logs (optional - you may want to keep these)
+            // Clear students
+            await run('DELETE FROM students');
+            console.log('   ✅ Students cleared');
+
+            // Clear audit logs
             await run('DELETE FROM audit_logs');
             console.log('   ✅ Audit logs cleared');
 
-            // Note: exams and questions tables are NOT cleared
-            // This allows reusing questions across terms
+            // Reset SQLite auto-increment counters
+            await run("DELETE FROM sqlite_sequence WHERE name IN ('students', 'exams', 'questions', 'submissions', 'exam_sessions', 'audit_logs')");
+            console.log('   ✅ Auto-increment counters reset');
 
-            console.log('✅ Database reset complete - Ready for new term!');
+            console.log('✅ DATABASE FULLY RESET - Ready for fresh start!');
 
             return {
                 success: true,
-                message: 'Database reset successfully',
+                message: 'Database fully reset - all data cleared',
                 cleared: {
                     students: true,
-                    submissions: true,
-                    auditLogs: true
-                },
-                retained: {
                     exams: true,
                     questions: true,
-                    settings: true
+                    submissions: true,
+                    examSessions: true,
+                    auditLogs: true
                 }
             };
         } catch (error) {

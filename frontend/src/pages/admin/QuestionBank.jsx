@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Upload, FileText, Filter, Image as ImageIcon, Edit2, Eye, Search } from 'lucide-react';
+import { Upload, FileText, Filter, Image as ImageIcon, Edit2, Eye, Search, Trash2 } from 'lucide-react';
 import Button from '../../components/common/Button';
 import Modal from '../../components/common/Modal';
 import Input from '../../components/common/Input';
@@ -7,7 +7,7 @@ import Select from '../../components/common/Select';
 import Alert from '../../components/common/Alert';
 import Card from '../../components/common/Card';
 import Badge from '../../components/common/Badge';
-import { uploadQuestions, getAllQuestions, updateQuestion } from '../../services/api';
+import { uploadQuestions, getAllQuestions, updateQuestion, deleteQuestion } from '../../services/api';
 
 const CLASS_LEVELS = ['', 'JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3'];
 
@@ -39,7 +39,6 @@ const QuestionBank = () => {
         loadQuestions();
     }, []);
 
-    // ✅ AUTO-FILTER when filters change
     useEffect(() => {
         filterQuestions();
     }, [filters, questions]);
@@ -59,17 +58,14 @@ const QuestionBank = () => {
     const filterQuestions = () => {
         let filtered = [...questions];
 
-        // Filter by class
         if (filters.class) {
             filtered = filtered.filter(q => q.class === filters.class);
         }
 
-        // Filter by subject
         if (filters.subject) {
             filtered = filtered.filter(q => q.subject === filters.subject);
         }
 
-        // Filter by search text
         if (filters.search) {
             const searchLower = filters.search.toLowerCase();
             filtered = filtered.filter(q =>
@@ -107,7 +103,6 @@ const QuestionBank = () => {
         }
     };
 
-    // ✅ ADD/UPDATE IMAGE for existing question
     const handleAddImage = async () => {
         if (!selectedQuestion || !imageFile) {
             showAlert('error', 'Please select an image');
@@ -119,16 +114,11 @@ const QuestionBank = () => {
             const formData = new FormData();
             formData.append('file', imageFile);
             formData.append('question_text', selectedQuestion.question_text);
-            formData.append('question_type', selectedQuestion.question_type);
-            formData.append('points', selectedQuestion.points);
-
-            if (selectedQuestion.question_type === 'mcq') {
-                formData.append('option_a', selectedQuestion.option_a);
-                formData.append('option_b', selectedQuestion.option_b);
-                formData.append('option_c', selectedQuestion.option_c);
-                formData.append('option_d', selectedQuestion.option_d);
-                formData.append('correct_answer', selectedQuestion.correct_answer);
-            }
+            formData.append('option_a', selectedQuestion.option_a);
+            formData.append('option_b', selectedQuestion.option_b);
+            formData.append('option_c', selectedQuestion.option_c);
+            formData.append('option_d', selectedQuestion.option_d);
+            formData.append('correct_answer', selectedQuestion.correct_answer);
 
             await updateQuestion(selectedQuestion.id, formData);
 
@@ -144,12 +134,27 @@ const QuestionBank = () => {
         }
     };
 
+    const handleDeleteQuestion = async (id) => {
+        if (!confirm('Are you sure you want to delete this question?')) {
+            return;
+        }
+
+        try {
+            await deleteQuestion(id);
+            showAlert('success', 'Question deleted successfully');
+            loadQuestions();
+        } catch (error) {
+            showAlert('error', 'Failed to delete question');
+        }
+    };
+
+    // Download CSV template - MCQ only, no points
     const downloadTemplate = () => {
-        const template = `question_text,question_type,option_a,option_b,option_c,option_d,correct_answer,points
-"What is 2 + 2?",mcq,3,4,5,6,B,2
-"What is the capital of France?",mcq,London,Paris,Berlin,Rome,B,2
-"Explain photosynthesis",theory,,,,,,10
-"Describe three causes of WWI",essay,,,,,,15`;
+        const template = `question_text,option_a,option_b,option_c,option_d,correct_answer
+"What is 2 + 2?",3,4,5,6,B
+"What is the capital of Nigeria?",Abuja,Lagos,Kano,Port Harcourt,A
+"Which planet is closest to the sun?",Venus,Mercury,Earth,Mars,B
+"What is H2O?",Salt,Sugar,Water,Oil,C`;
 
         const blob = new Blob([template], { type: 'text/csv' });
         const url = window.URL.createObjectURL(blob);
@@ -160,6 +165,14 @@ const QuestionBank = () => {
         window.URL.revokeObjectURL(url);
     };
 
+    // Group questions by subject for display
+    const groupedBySubject = filteredQuestions.reduce((acc, q) => {
+        const key = `${q.subject} (${q.class})`;
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(q);
+        return acc;
+    }, {});
+
     return (
         <div className="mx-auto max-w-7xl space-y-6 py-6 px-4 sm:px-6 lg:px-8">
             {alert && <Alert type={alert.type} message={alert.message} onClose={() => setAlert(null)} />}
@@ -168,7 +181,7 @@ const QuestionBank = () => {
                 <div>
                     <h1 className="text-2xl font-bold text-gray-900">Question Bank</h1>
                     <p className="mt-1 text-sm text-gray-600">
-                        Upload questions via CSV, then add images to existing questions
+                        Upload MCQ questions via CSV (1 point per question)
                     </p>
                 </div>
                 <Button
@@ -180,185 +193,121 @@ const QuestionBank = () => {
                 </Button>
             </div>
 
-            {/* Statistics */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <Card>
-                    <div className="p-4">
-                        <p className="text-sm text-gray-600">Total Questions</p>
-                        <p className="text-2xl font-bold text-gray-900">{questions.length}</p>
-                    </div>
-                </Card>
-                <Card>
-                    <div className="p-4">
-                        <p className="text-sm text-gray-600">With Images</p>
-                        <p className="text-2xl font-bold text-green-600">
-                            {questions.filter(q => q.image_url).length}
-                        </p>
-                    </div>
-                </Card>
-                <Card>
-                    <div className="p-4">
-                        <p className="text-sm text-gray-600">Without Images</p>
-                        <p className="text-2xl font-bold text-orange-600">
-                            {questions.filter(q => !q.image_url).length}
-                        </p>
-                    </div>
-                </Card>
-                <Card>
-                    <div className="p-4">
-                        <p className="text-sm text-gray-600">Filtered Results</p>
-                        <p className="text-2xl font-bold text-blue-600">{filteredQuestions.length}</p>
-                    </div>
-                </Card>
-            </div>
-
             {/* Filters */}
             <Card>
-                <div className="p-6">
-                    <div className="flex items-center gap-3 mb-4">
-                        <Filter className="h-5 w-5 text-blue-600" />
-                        <h2 className="text-lg font-semibold text-gray-900">Filter Questions</h2>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <Select
-                            label="Class"
-                            value={filters.class}
-                            onChange={(e) => setFilters({ ...filters, class: e.target.value })}
-                            options={[
-                                { value: '', label: 'All Classes' },
-                                ...CLASS_LEVELS.filter(c => c).map(c => ({ value: c, label: c }))
-                            ]}
+                <div className="flex flex-wrap items-center gap-4">
+                    <Filter className="h-5 w-5 text-gray-500" />
+                    <Select
+                        value={filters.class}
+                        onChange={(e) => setFilters({ ...filters, class: e.target.value })}
+                        options={CLASS_LEVELS.map(c => ({ value: c, label: c || 'All Classes' }))}
+                        className="w-40"
+                    />
+                    <Select
+                        value={filters.subject}
+                        onChange={(e) => setFilters({ ...filters, subject: e.target.value })}
+                        options={[{ value: '', label: 'All Subjects' }, ...uniqueSubjects.map(s => ({ value: s, label: s }))]}
+                        className="w-48"
+                    />
+                    <div className="relative flex-1 min-w-[200px]">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <input
+                            type="text"
+                            placeholder="Search questions..."
+                            value={filters.search}
+                            onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                            className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         />
-                        <Select
-                            label="Subject"
-                            value={filters.subject}
-                            onChange={(e) => setFilters({ ...filters, subject: e.target.value })}
-                            options={[
-                                { value: '', label: 'All Subjects' },
-                                ...uniqueSubjects.map(s => ({ value: s, label: s }))
-                            ]}
-                        />
-                        <div className="relative">
-                            <Input
-                                label="Search"
-                                placeholder="Search question text..."
-                                value={filters.search}
-                                onChange={(e) => setFilters({ ...filters, search: e.target.value })}
-                            />
-                            <Search className="absolute right-3 top-9 h-4 w-4 text-gray-400" />
-                        </div>
                     </div>
+                    <Badge variant="info">{filteredQuestions.length} questions</Badge>
                 </div>
             </Card>
 
             {/* Questions List */}
-            <Card>
-                <div className="p-6">
-                    <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                        Questions ({filteredQuestions.length})
-                    </h2>
-                    {loading ? (
-                        <div className="flex justify-center py-12">
-                            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-                        </div>
-                    ) : filteredQuestions.length === 0 ? (
-                        <div className="text-center py-12 text-gray-500">
-                            {questions.length === 0 ? (
-                                <>No questions found. Upload questions via CSV to get started.</>
-                            ) : (
-                                <>No questions match your filters. Try adjusting the filters above.</>
-                            )}
-                        </div>
-                    ) : (
-                        <div className="space-y-4 max-h-[600px] overflow-y-auto">
-                            {filteredQuestions.map((question, index) => (
-                                <div
-                                    key={question.id}
-                                    className="border border-gray-200 rounded-lg p-4 hover:border-blue-300 transition-all"
-                                >
-                                    <div className="flex items-start justify-between">
-                                        <div className="flex-1">
-                                            <div className="flex items-center gap-2 mb-2">
-                                                <Badge variant="info">{question.class}</Badge>
-                                                <Badge variant="default">{question.subject}</Badge>
-                                                <Badge variant={question.question_type === 'mcq' ? 'success' : 'warning'}>
-                                                    {question.question_type?.toUpperCase()}
-                                                </Badge>
-                                                <span className="text-sm text-gray-600">
-                                                    {question.points} {question.points === 1 ? 'point' : 'points'}
-                                                </span>
-                                                {question.image_url && (
-                                                    <Badge variant="success">
+            {loading ? (
+                <div className="text-center py-12">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                    <p className="mt-4 text-gray-600">Loading questions...</p>
+                </div>
+            ) : Object.keys(groupedBySubject).length === 0 ? (
+                <Card>
+                    <div className="text-center py-12">
+                        <FileText className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+                        <h3 className="text-lg font-medium text-gray-900 mb-2">No Questions Found</h3>
+                        <p className="text-gray-600 mb-4">Upload questions using CSV to get started.</p>
+                        <Button onClick={() => setIsCsvModalOpen(true)}>
+                            <Upload className="mr-2 h-4 w-4" />
+                            Upload CSV
+                        </Button>
+                    </div>
+                </Card>
+            ) : (
+                <div className="space-y-6">
+                    {Object.entries(groupedBySubject).map(([groupKey, groupQuestions]) => (
+                        <Card key={groupKey}>
+                            <div className="flex items-center justify-between mb-4">
+                                <h3 className="text-lg font-semibold text-gray-900">{groupKey}</h3>
+                                <Badge variant="primary">{groupQuestions.length} questions</Badge>
+                            </div>
+                            <div className="space-y-3">
+                                {groupQuestions.map((q, index) => (
+                                    <div
+                                        key={q.id}
+                                        className="flex items-start justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                                    >
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-sm font-medium text-gray-500">Q{index + 1}</span>
+                                                {q.image_url && (
+                                                    <Badge variant="info" className="text-xs">
                                                         <ImageIcon className="h-3 w-3 mr-1" />
                                                         Has Image
                                                     </Badge>
                                                 )}
                                             </div>
-                                            <p className="text-gray-900 font-medium mb-2">
-                                                {index + 1}. {question.question_text}
+                                            <p className="text-sm text-gray-900 line-clamp-2">{q.question_text}</p>
+                                            <p className="text-xs text-gray-500 mt-1">
+                                                Answer: <span className="font-medium text-green-600">{q.correct_answer}</span>
                                             </p>
-                                            {question.question_type === 'mcq' && (
-                                                <div className="grid grid-cols-2 gap-2 text-sm text-gray-600 ml-4">
-                                                    <div className={question.correct_answer === 'A' ? 'text-green-600 font-semibold' : ''}>
-                                                        A. {question.option_a}
-                                                    </div>
-                                                    <div className={question.correct_answer === 'B' ? 'text-green-600 font-semibold' : ''}>
-                                                        B. {question.option_b}
-                                                    </div>
-                                                    <div className={question.correct_answer === 'C' ? 'text-green-600 font-semibold' : ''}>
-                                                        C. {question.option_c}
-                                                    </div>
-                                                    <div className={question.correct_answer === 'D' ? 'text-green-600 font-semibold' : ''}>
-                                                        D. {question.option_d}
-                                                    </div>
-                                                </div>
-                                            )}
                                         </div>
-                                        <div className="flex gap-2 ml-4">
+                                        <div className="flex items-center gap-2 ml-4">
                                             <button
                                                 onClick={() => {
-                                                    setSelectedQuestion(question);
+                                                    setSelectedQuestion(q);
                                                     setIsViewModalOpen(true);
                                                 }}
-                                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                                title="View question"
+                                                className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded"
+                                                title="View"
                                             >
                                                 <Eye className="h-4 w-4" />
                                             </button>
                                             <button
                                                 onClick={() => {
-                                                    setSelectedQuestion(question);
-                                                    setImageFile(null);
+                                                    setSelectedQuestion(q);
                                                     setIsEditImageModalOpen(true);
                                                 }}
-                                                className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
-                                                title={question.image_url ? 'Replace image' : 'Add image'}
+                                                className="p-2 text-gray-500 hover:text-green-600 hover:bg-green-50 rounded"
+                                                title="Add/Edit Image"
                                             >
                                                 <ImageIcon className="h-4 w-4" />
                                             </button>
+                                            <button
+                                                onClick={() => handleDeleteQuestion(q.id)}
+                                                className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded"
+                                                title="Delete"
+                                            >
+                                                <Trash2 className="h-4 w-4" />
+                                            </button>
                                         </div>
                                     </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                                ))}
+                            </div>
+                        </Card>
+                    ))}
                 </div>
-            </Card>
+            )}
 
-            {/* Instructions */}
-            <Card>
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                    <h4 className="font-semibold text-blue-900 mb-2">💡 How to Manage Questions</h4>
-                    <div className="space-y-2 text-sm text-blue-800">
-                        <p><strong>Step 1:</strong> Upload questions via CSV (bulk import)</p>
-                        <p><strong>Step 2:</strong> Use filters to find questions by class/subject</p>
-                        <p><strong>Step 3:</strong> Click the image icon <ImageIcon className="inline h-3 w-3" /> to add/replace images</p>
-                        <p><strong>Step 4:</strong> Click the eye icon <Eye className="inline h-3 w-3" /> to preview questions</p>
-                    </div>
-                </div>
-            </Card>
-
-            {/* CSV Upload Modal */}
+            {/* Upload CSV Modal */}
             <Modal
                 isOpen={isCsvModalOpen}
                 onClose={() => {
@@ -366,29 +315,39 @@ const QuestionBank = () => {
                     setCsvMeta({ subject: '', class: '' });
                     setUploadFile(null);
                 }}
-                title="Upload Questions CSV"
+                title="Upload MCQ Questions"
                 size="md"
             >
                 <div className="space-y-4">
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                        <h4 className="font-medium text-blue-900 mb-2">CSV Format (MCQ Only)</h4>
+                        <code className="text-xs text-blue-800 block bg-blue-100 p-2 rounded">
+                            question_text,option_a,option_b,option_c,option_d,correct_answer
+                        </code>
+                        <p className="text-xs text-blue-700 mt-2">
+                            • All questions are worth 1 point each<br />
+                            • correct_answer must be A, B, C, or D
+                        </p>
+                    </div>
+
                     <Input
                         label="Subject Name"
-                        placeholder="e.g., Mathematics, English, Biology"
+                        placeholder="e.g., Mathematics"
                         value={csvMeta.subject}
                         onChange={(e) => setCsvMeta({ ...csvMeta, subject: e.target.value })}
                         required
                     />
+
                     <Select
                         label="Class"
                         value={csvMeta.class}
                         onChange={(e) => setCsvMeta({ ...csvMeta, class: e.target.value })}
-                        options={[
-                            { value: '', label: 'Select Class' },
-                            ...CLASS_LEVELS.filter(c => c).map((c) => ({ value: c, label: c }))
-                        ]}
+                        options={CLASS_LEVELS.filter(c => c).map(c => ({ value: c, label: c }))}
                         required
                     />
+
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
                             CSV File <span className="text-red-500">*</span>
                         </label>
                         <input
@@ -517,8 +476,6 @@ const QuestionBank = () => {
                         <div className="bg-gray-50 p-3 rounded-lg">
                             <p className="text-sm"><strong>Subject:</strong> {selectedQuestion.subject}</p>
                             <p className="text-sm"><strong>Class:</strong> {selectedQuestion.class}</p>
-                            <p className="text-sm"><strong>Type:</strong> {selectedQuestion.question_type?.toUpperCase()}</p>
-                            <p className="text-sm"><strong>Points:</strong> {selectedQuestion.points}</p>
                         </div>
 
                         <div>
@@ -537,28 +494,23 @@ const QuestionBank = () => {
                             </div>
                         )}
 
-                        {selectedQuestion.question_type === 'mcq' && (
-                            <div>
-                                <p className="font-semibold mb-2">Options:</p>
-                                <div className="space-y-1">
-                                    <p className={selectedQuestion.correct_answer === 'A' ? 'text-green-600 font-semibold' : ''}>
-                                        A. {selectedQuestion.option_a}
-                                    </p>
-                                    <p className={selectedQuestion.correct_answer === 'B' ? 'text-green-600 font-semibold' : ''}>
-                                        B. {selectedQuestion.option_b}
-                                    </p>
-                                    <p className={selectedQuestion.correct_answer === 'C' ? 'text-green-600 font-semibold' : ''}>
-                                        C. {selectedQuestion.option_c}
-                                    </p>
-                                    <p className={selectedQuestion.correct_answer === 'D' ? 'text-green-600 font-semibold' : ''}>
-                                        D. {selectedQuestion.option_d}
-                                    </p>
-                                </div>
-                                <p className="mt-2 text-green-600 font-semibold">
-                                    Correct Answer: {selectedQuestion.correct_answer}
+                        <div>
+                            <p className="font-semibold mb-2">Options:</p>
+                            <div className="space-y-1">
+                                <p className={selectedQuestion.correct_answer === 'A' ? 'text-green-600 font-semibold' : ''}>
+                                    A. {selectedQuestion.option_a} {selectedQuestion.correct_answer === 'A' && '✓'}
+                                </p>
+                                <p className={selectedQuestion.correct_answer === 'B' ? 'text-green-600 font-semibold' : ''}>
+                                    B. {selectedQuestion.option_b} {selectedQuestion.correct_answer === 'B' && '✓'}
+                                </p>
+                                <p className={selectedQuestion.correct_answer === 'C' ? 'text-green-600 font-semibold' : ''}>
+                                    C. {selectedQuestion.option_c} {selectedQuestion.correct_answer === 'C' && '✓'}
+                                </p>
+                                <p className={selectedQuestion.correct_answer === 'D' ? 'text-green-600 font-semibold' : ''}>
+                                    D. {selectedQuestion.option_d} {selectedQuestion.correct_answer === 'D' && '✓'}
                                 </p>
                             </div>
-                        )}
+                        </div>
                     </div>
                 )}
             </Modal>

@@ -8,9 +8,9 @@ const studentController = require('../controllers/studentController');
 router.post('/login', studentController.login);
 
 // ========================================
-// EXAM -
+// EXAM
 // ========================================
-router.get('/exam/:subject/questions', studentController.getExamQuestions); // ?admission_number=...
+router.get('/exam/:subject/questions', studentController.getExamQuestions);
 router.post('/exam/save-progress', studentController.saveExamProgress);
 router.post('/exam/submit', studentController.submitExam);
 

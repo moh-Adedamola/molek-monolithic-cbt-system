@@ -12,44 +12,70 @@
     "frontend/dist/**/*",
     "backend/src/**/*",
     "backend/package.json",
-    "backend/package-lock.json",
-    "backend/node_modules/**/*",
-    "!backend/node_modules/.cache",
-    "!backend/node_modules/**/*.{md,markdown,txt}",
-    "!backend/node_modules/**/test/**/*",
-    "!backend/node_modules/**/tests/**/*",
-    "package.json"
+    "!backend/package-lock.json",
+    "package.json",
+    "!**/node_modules/**/*",
+    "!**/*.map",
+    "!**/*.ts",
+    "!**/test/**/*",
+    "!**/tests/**/*",
+    "!**/__test__/**/*",
+    "!**/archives/**/*",
+    "!**/logs/**/*",
+    "!**/*.log",
+    "!**/*.md",
+    "!**/*.txt",
+    "!**/LICENSE*",
+    "!**/CHANGELOG*"
+  ],
+  "extraFiles": [
+    {
+      "from": "backend/node_modules",
+      "to": "resources/backend/node_modules",
+      "filter": [
+        "**/*",
+        "!.cache/**/*",
+        "!**/test/**/*",
+        "!**/tests/**/*",
+        "!**/*.md",
+        "!**/*.markdown",
+        "!**/*.txt",
+        "!**/LICENSE*",
+        "!**/CHANGELOG*",
+        "!**/*.d.ts",
+        "!**/*.map",
+        "!**/docs/**/*",
+        "!**/example/**/*",
+        "!**/examples/**/*",
+        "!**/.github/**/*"
+      ]
+    }
   ],
   "compression": "maximum",
   "asar": true,
-
   "asarUnpack": [
-    "backend/**/*.db",
-    "backend/src/**/*",
-    "backend/node_modules/bcrypt/**/*",
-    "backend/node_modules/sqlite3/**/*",
-    "backend/node_modules/better-sqlite3/**/*",
-    "**/*.node"
+    "**/*.node",
+    "**/bcrypt/**/*",
+    "**/sqlite3/**/*",
+    "**/better-sqlite3/**/*"
   ],
-
   "npmRebuild": true,
   "buildDependenciesFromSource": false,
-  "nodeGypRebuild": true,
-
+  "nodeGypRebuild": false,
   "electronVersion": "28.0.0",
-
   "win": {
     "target": [
       {
         "target": "nsis",
-        "arch": ["x64"]
+        "arch": [
+          "x64"
+        ]
       }
     ],
     "icon": "electron/icon.ico",
     "verifyUpdateCodeSignature": false,
     "requestedExecutionLevel": "requireAdministrator"
   },
-
   "nsis": {
     "oneClick": false,
     "allowToChangeInstallationDirectory": true,
@@ -64,17 +90,18 @@
     "perMachine": true,
     "deleteAppDataOnUninstall": false
   },
-
   "extraResources": [
     {
       "from": "backend/src/db",
       "to": "backend/src/db",
-      "filter": ["**/*.db"]
+      "filter": [
+        "**/*.db"
+      ]
     }
   ],
-
   "publish": {
     "provider": "generic",
     "url": "https://github.com/moh-Adedamola/molek-monolithic-cbt-system/releases/latest"
-  }
+  },
+  "afterPack": "./Afterpack.js"
 }

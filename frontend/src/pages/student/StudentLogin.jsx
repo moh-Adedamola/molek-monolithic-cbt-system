@@ -27,8 +27,11 @@ export default function StudentLogin() {
         };
         loadSettings();
 
-        // Clear any existing session
+        // Clear ALL session data
         localStorage.removeItem('admissionNumber');
+        localStorage.removeItem('activeExams');
+        localStorage.removeItem('studentName');
+        localStorage.removeItem('examDuration');
     }, []);
 
     const handleChange = (e) => {
@@ -60,8 +63,26 @@ export default function StudentLogin() {
 
             console.log('✅ Login successful:', res.data);
 
-            // Store admission number for session
+            // Store ALL required data in localStorage
             localStorage.setItem('admissionNumber', res.data.admission_number);
+
+            // Store student name (try multiple possible field names)
+            const studentName = res.data.full_name || res.data.name ||
+                `${res.data.first_name || ''} ${res.data.last_name || ''}`.trim() ||
+                'Student';
+            localStorage.setItem('studentName', studentName);
+
+            // Store active exams array
+            if (res.data.active_exams && Array.isArray(res.data.active_exams)) {
+                localStorage.setItem('activeExams', JSON.stringify(res.data.active_exams));
+                console.log('📦 Stored active exams:', res.data.active_exams.length, 'exam(s)');
+            } else {
+                // If no active exams, store empty array
+                localStorage.setItem('activeExams', JSON.stringify([]));
+                console.log('⚠️ No active exams available');
+            }
+
+            console.log('✅ Successfully stored in localStorage');
 
             // Navigate to exam selection
             navigate('/exam-select');
@@ -84,12 +105,12 @@ export default function StudentLogin() {
     };
 
     return (
-        <div className="min-h-screen bg-linear-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-4">
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center p-4">
             <div className="max-w-md w-full">
                 {/* Header */}
                 <div className="text-center mb-8">
-                    <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-600 rounded-full mb-4">
-                        <GraduationCap className="h-8 w-8 text-white" />
+                    <div className="inline-flex items-center justify-center w-19 h-19 rounded-full mb-4">
+                        <img alt={'molek school'} src="/logo.webp" className="h-18 w-18"/>
                     </div>
                     <h1 className="text-3xl font-bold text-gray-900 mb-2">
                         {settings?.schoolName || 'Molek School'}
@@ -123,7 +144,7 @@ export default function StudentLogin() {
                             type="text"
                             value={formData.admission_number}
                             onChange={handleChange}
-                            placeholder="e.g., 20240001"
+                            placeholder="e.g., MOL/2026/001"
                             required
                             autoFocus
                             className="uppercase"

@@ -1,5 +1,5 @@
 // electron/main.js
-// ✅ COMPLETE PRODUCTION-READY CODE WITH FULLSCREEN KIOSK MODE
+// COMPLETE PRODUCTION-READY CODE WITH FULLSCREEN KIOSK MODE
 
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell, globalShortcut } = require('electron');
 const path = require('path');
@@ -67,7 +67,8 @@ function initializePaths() {
 async function startBackend() {
     return new Promise((resolve, reject) => {
         try {
-            const serverPath = path.join(paths.backend, 'server.js');
+            // FIXED: Correct path to server.js inside src folder
+            const serverPath = path.join(paths.backend, 'src', 'server.js');
 
             if (!fs.existsSync(serverPath)) {
                 throw new Error(`Backend not found at: ${serverPath}`);
@@ -163,11 +164,11 @@ function createAdminWindow() {
 }
 
 // ============================================
-// ✅ CREATE EXAM WINDOW (FULLSCREEN KIOSK MODE)
+// CREATE EXAM WINDOW (FULLSCREEN KIOSK MODE)
 // ============================================
 function createExamWindow() {
     examWindow = new BrowserWindow({
-        // ✅ KIOSK MODE - Fullscreen with no escape
+        // KIOSK MODE - Fullscreen with no escape
         kiosk: true,
         fullscreen: true,
         frame: false,
@@ -195,7 +196,7 @@ function createExamWindow() {
         skipTaskbar: false
     });
 
-    // ✅ DISABLE ALL SHORTCUTS DURING EXAM
+    // DISABLE ALL SHORTCUTS DURING EXAM
     disableShortcuts();
 
     examWindow.setMenu(null);
@@ -216,7 +217,7 @@ function createExamWindow() {
         examWindow.setKiosk(true);
     });
 
-    // ✅ PREVENT CLOSING DURING EXAM
+    // PREVENT CLOSING DURING EXAM
     examWindow.on('close', (e) => {
         e.preventDefault();
 
@@ -232,7 +233,7 @@ function createExamWindow() {
         console.log('⚠️  Student attempted to close exam window');
     });
 
-    // ✅ PREVENT NAVIGATION AWAY FROM EXAM
+    // PREVENT NAVIGATION AWAY FROM EXAM
     examWindow.webContents.on('will-navigate', (e, url) => {
         if (!url.includes('localhost')) {
             e.preventDefault();
@@ -240,7 +241,7 @@ function createExamWindow() {
         }
     });
 
-    // ✅ PREVENT NEW WINDOWS
+    // PREVENT NEW WINDOWS
     examWindow.webContents.setWindowOpenHandler(() => {
         console.log('⚠️  Blocked attempt to open new window');
         return { action: 'deny' };
@@ -253,7 +254,7 @@ function createExamWindow() {
 }
 
 // ============================================
-// ✅ DISABLE SHORTCUTS (ANTI-CHEATING)
+// DISABLE SHORTCUTS (ANTI-CHEATING)
 // ============================================
 function disableShortcuts() {
     console.log('🔒 Disabling keyboard shortcuts (anti-cheat mode)');
@@ -291,7 +292,7 @@ function disableShortcuts() {
 }
 
 // ============================================
-// ✅ ENABLE SHORTCUTS (After Exam)
+// ENABLE SHORTCUTS (After Exam)
 // ============================================
 function enableShortcuts() {
     console.log('✅ Re-enabling keyboard shortcuts');
@@ -326,7 +327,7 @@ ipcMain.handle('get-network-info', () => {
     return addresses;
 });
 
-// ✅ START EXAM MODE
+// START EXAM MODE
 ipcMain.handle('start-exam-mode', () => {
     console.log('🔒 Starting exam in kiosk mode');
     if (examWindow) {
@@ -340,7 +341,7 @@ ipcMain.handle('start-exam-mode', () => {
     }
 });
 
-// ✅ EXIT EXAM MODE
+// EXIT EXAM MODE
 ipcMain.handle('exit-exam-mode', () => {
     console.log('✅ Exiting exam mode');
     if (examWindow) {
@@ -408,7 +409,7 @@ app.on('before-quit', () => {
     globalShortcut.unregisterAll();
 });
 
-// ✅ PREVENT APP FROM BEING HIDDEN (Windows)
+// PREVENT APP FROM BEING HIDDEN (Windows)
 if (process.platform === 'win32') {
     app.on('browser-window-blur', () => {
         if (examWindow && !examWindow.isDestroyed()) {

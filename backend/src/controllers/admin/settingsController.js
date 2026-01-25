@@ -1,12 +1,12 @@
+/**
+ * Settings Controller
+ * 
+ * UPDATED: Uses centralized helpers.js
+ */
+
 const { get, run } = require('../../utils/db');
 const { logAudit, ACTIONS } = require('../../services/auditService');
-
-function getClientIp(req) {
-    return req.headers['x-forwarded-for']?.split(',')[0] ||
-        req.connection.remoteAddress ||
-        req.socket.remoteAddress ||
-        'unknown';
-}
+const { getClientIp } = require('../../utils/helpers');
 
 /**
  * Get System Settings

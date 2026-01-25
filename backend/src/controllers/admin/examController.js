@@ -1,12 +1,13 @@
+/**
+ * Exam Controller
+ * Handles exam CRUD operations
+ * 
+ * UPDATED: Uses centralized helpers.js
+ */
+
 const { get, all, run } = require('../../utils/db');
 const { logAudit, ACTIONS } = require('../../services/auditService');
-
-function getClientIp(req) {
-    return req.headers['x-forwarded-for']?.split(',')[0] ||
-        req.connection.remoteAddress ||
-        req.socket.remoteAddress ||
-        'unknown';
-}
+const { getClientIp } = require('../../utils/helpers');
 
 /**
  * Get All Exams
@@ -179,7 +180,7 @@ async function activateExam(req, res) {
 }
 
 /**
- * ✅ FIXED: Get All Subjects
+ * Get All Subjects
  * GET /api/admin/subjects
  *
  * Returns both:
@@ -209,7 +210,6 @@ async function getSubjects(req, res) {
             }
         });
 
-        // ✅ Return both formats
         res.json({
             success: true,
             subjects: uniqueSubjects,           // Flat array for filters

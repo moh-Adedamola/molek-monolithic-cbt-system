@@ -3,17 +3,18 @@ import Modal from './Modal';
 import clsx from 'clsx';
 
 const ConfirmDialog = ({
-                           isOpen,
-                           onClose,
-                           onConfirm,
-                           title = 'Confirm Action',
-                           message = 'Are you sure you want to proceed?',
-                           confirmText = 'Confirm',
-                           cancelText = 'Cancel',
-                           type = 'danger',
-                           loading = false,
-                           variant = 'light',
-                       }) => {
+    isOpen,
+    onClose,
+    onConfirm,
+    title = 'Confirm Action',
+    message = 'Are you sure you want to proceed?',
+    confirmText = 'Confirm',
+    cancelText = 'Cancel',
+    type = 'danger',
+    loading = false,
+    variant = 'light',
+    confirmDisabled = false,
+}) => {
     return (
         <Modal
             isOpen={isOpen}
@@ -23,7 +24,6 @@ const ConfirmDialog = ({
             variant={variant}
         >
             <div className="space-y-6">
-                {/* ✅ FIXED: Changed from <p> to <div> to allow complex HTML */}
                 <div className={clsx(
                     'text-base',
                     variant === 'dark' ? 'text-gray-300' : 'text-gray-600'
@@ -42,6 +42,7 @@ const ConfirmDialog = ({
                         variant={type === 'danger' ? 'danger' : 'primary'}
                         onClick={onConfirm}
                         loading={loading}
+                        disabled={confirmDisabled || loading}
                     >
                         {confirmText}
                     </Button>

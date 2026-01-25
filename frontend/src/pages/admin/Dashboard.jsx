@@ -20,7 +20,7 @@ const AdminDashboard = () => {
         totalStudents: 0,
         totalExams: 0,
         activeExams: 0,
-        completedExams: 0,
+        totalSubmissions: 0,
         totalSubjects: 0,
     });
     const [recentSubmissions, setRecentSubmissions] = useState([]);
@@ -35,16 +35,18 @@ const AdminDashboard = () => {
 
             // Load stats
             const statsResponse = await getDashboardStats();
-            setStats(statsResponse.data || {
+            console.log('📊 Dashboard stats:', statsResponse.data);
+            setStats(statsResponse.data?.stats || {
                 totalStudents: 0,
                 totalExams: 0,
                 activeExams: 0,
-                completedExams: 0,
+                totalSubmissions: 0,
                 totalSubjects: 0
             });
 
             // Load recent submissions
             const submissionsResponse = await getRecentSubmissions({ limit: 10 });
+            console.log('📝 Recent submissions:', submissionsResponse.data);
             setRecentSubmissions(submissionsResponse.data?.submissions || []);
         } catch (error) {
             console.error('Failed to load dashboard:', error);
@@ -52,7 +54,7 @@ const AdminDashboard = () => {
                 totalStudents: 0,
                 totalExams: 0,
                 activeExams: 0,
-                completedExams: 0,
+                totalSubmissions: 0,
                 totalSubjects: 0
             });
             setRecentSubmissions([]);
@@ -79,7 +81,7 @@ const AdminDashboard = () => {
                 <Card title="Total Students" value={stats.totalStudents} icon={GraduationCap} />
                 <Card title="Total Exams" value={stats.totalExams} icon={ClipboardList} />
                 <Card title="Active Exams" value={stats.activeExams} icon={TrendingUp} />
-                <Card title="Completed" value={stats.completedExams} icon={CheckCircle} />
+                <Card title="Submissions" value={stats.totalSubmissions} icon={CheckCircle} />
                 <Card title="Subjects" value={stats.totalSubjects} icon={BookOpen} />
             </div>
 
@@ -113,7 +115,7 @@ const AdminDashboard = () => {
                     </Button>
                     <Button
                         variant="outline"
-                        onClick={() => navigate('/admin/results')}
+                        onClick={() => navigate('/admin/reports')}
                         className="flex flex-col items-center gap-2 p-4"
                     >
                         <CheckCircle className="h-6 w-6" />
@@ -132,18 +134,61 @@ const AdminDashboard = () => {
                 ) : (
                     <div className="space-y-3">
                         {recentSubmissions.map((sub, idx) => {
-                            const percentage = Math.round((sub.score / sub.total_questions) * 100);
+                            // Handle both camelCase and snake_case field names
+                            const totalQuestions = sub.totalQuestions || sub.total_questions || 0;
+                            const score = sub.score || 0;
+
+                            // Calculate raw percentage
+                            let percentage = totalQuestions > 0
+                                ? Math.round((score / totalQuestions) * 100)
+                                : 0;
+
+                            // Detect impossible scores (score > total possible)
+                            const isImpossibleScore = score > totalQuestions;
+
+                            // Cap percentage at 100% maximum
+                            if (percentage > 100) {
+                                console.warn(`⚠️  Impossible score detected for ${sub.student?.name || 'student'}: ${score}/${totalQuestions} = ${percentage}%`);
+                                percentage = 100;
+                            }
+
+                            // Handle both nested (student.name) and flat structure
+                            const studentName = sub.student?.name ||
+                                `${sub.first_name || ''} ${sub.last_name || ''}`.trim() ||
+                                'Unknown Student';
+
+                            const studentClass = sub.student?.class || sub.class || '';
+
                             return (
                                 <div key={idx} className="flex items-center justify-between border-b pb-3 last:border-b-0">
                                     <div>
                                         <p className="font-medium text-gray-900">
-                                            {sub.first_name} {sub.last_name}
+                                            {studentName}
+                                            {isImpossibleScore && (
+                                                <span
+                                                    className="ml-2 text-xs text-orange-600 cursor-help"
+                                                    title={`Warning: Score (${score}) exceeds total possible points (${totalQuestions})`}
+                                                >
+                                                    ⚠️
+                                                </span>
+                                            )}
                                         </p>
-                                        <p className="text-sm text-gray-500">{sub.subject}</p>
+                                        <p className="text-sm text-gray-500">
+                                            {sub.subject}{studentClass && ` • ${studentClass}`}
+                                        </p>
                                     </div>
                                     <div className="text-right">
-                                        <p className="font-medium">{sub.score}/{sub.total_questions}</p>
-                                        <Badge variant={percentage >= 70 ? 'success' : percentage >= 50 ? 'warning' : 'error'} size="sm">
+                                        <p className={`font-medium ${isImpossibleScore ? 'text-orange-600' : ''}`}>
+                                            {score}/{totalQuestions}
+                                        </p>
+                                        <Badge
+                                            variant={
+                                                percentage >= 70 ? 'success' :
+                                                    percentage >= 50 ? 'warning' :
+                                                        'error'
+                                            }
+                                            size="sm"
+                                        >
                                             {percentage}%
                                         </Badge>
                                     </div>

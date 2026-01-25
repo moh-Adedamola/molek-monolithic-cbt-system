@@ -1,15 +1,15 @@
+/**
+ * Archive Routes
+ * Handles term archiving and database reset
+ * 
+ * UPDATED: Uses centralized helpers.js
+ */
+
 const express = require('express');
 const router = express.Router();
 const archiveService = require('../services/archiveService');
 const { logAudit, ACTIONS } = require('../services/auditService');
-
-// Helper to get IP address
-function getClientIp(req) {
-    return req.headers['x-forwarded-for']?.split(',')[0] ||
-        req.connection.remoteAddress ||
-        req.socket.remoteAddress ||
-        'unknown';
-}
+const { getClientIp } = require('../utils/helpers');
 
 // Archive current term
 router.post('/archive', async (req, res) => {
@@ -57,7 +57,7 @@ router.post('/archive', async (req, res) => {
     }
 });
 
-// ✅ FIXED: Reset for new term
+// Reset for new term
 router.post('/reset', async (req, res) => {
     try {
         logAudit({
@@ -69,7 +69,6 @@ router.post('/reset', async (req, res) => {
             status: 'success'
         });
 
-        // ✅ FIXED: Changed from resetForNewTerm() to resetDatabase()
         const result = await archiveService.resetDatabase();
 
         logAudit({

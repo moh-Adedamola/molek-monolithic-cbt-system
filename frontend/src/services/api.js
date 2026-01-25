@@ -6,10 +6,46 @@ const API = axios.create({ baseURL: '/api' });
 // STUDENT ENDPOINTS
 // ============================================
 export const studentLogin = (data) => API.post('/students/login', data);
+
+// Backend route is /exam/:subject/questions
 export const getExamQuestions = (subject, admissionNumber) =>
     API.get(`/students/exam/${subject}/questions`, { params: { admission_number: admissionNumber } });
-export const saveExamProgress = (data) => API.post('/students/exam/save-progress', data);
-export const submitExam = (data) => API.post('/students/exam/submit', data);
+
+// Save exam progress
+export const saveExamProgress = (admissionNumber, subject, answers, timeRemaining) => {
+    console.log('💾 API: Saving progress with data:', {
+        admission_number: admissionNumber,
+        subject: subject,
+        answers_count: Object.keys(answers).length,
+        time_remaining: timeRemaining
+    });
+
+    return API.post('/students/exam/save-progress', {
+        admission_number: admissionNumber,
+        subject: subject,
+        answers: answers,
+        time_remaining: timeRemaining
+    });
+};
+
+// Submit exam - FIXED: includes auto_submitted parameter
+export const submitExam = (admissionNumber, subject, answers, autoSubmitted, timeTaken) => {
+    console.log('📤 API: Submitting exam with data:', {
+        admission_number: admissionNumber,
+        subject: subject,
+        answers_count: Object.keys(answers).length,
+        auto_submitted: autoSubmitted,
+        time_taken: timeTaken
+    });
+
+    return API.post('/students/exam/submit', {
+        admission_number: admissionNumber,
+        subject: subject,
+        answers: answers,
+        auto_submitted: autoSubmitted,
+        time_taken: timeTaken
+    });
+};
 
 // ============================================
 // ADMIN: STUDENTS
@@ -35,9 +71,8 @@ export const exportStudentsByClass = (className) =>
     API.get(`/admin/students/export?class=${className}`, { responseType: 'blob' });
 
 // ============================================
-// ADMIN: QUESTIONS & EXAMS - ✅ ENHANCED
+// ADMIN: QUESTIONS & EXAMS
 // ============================================
-// ✅ ENHANCED: Handle both CSV upload and single question with image
 export const uploadQuestions = (fileOrFormData, subject, classLevel) => {
     // Check if it's already a FormData object (single question with image)
     if (fileOrFormData instanceof FormData) {
@@ -64,7 +99,6 @@ export const getAllQuestions = () => API.get('/admin/questions');
 
 export const deleteQuestion = (id) => API.delete(`/admin/questions/${id}`);
 
-// ✅ ENHANCED: Support image upload in updates
 export const updateQuestion = (id, formData) => {
     return API.put(`/admin/questions/${id}`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
@@ -137,7 +171,7 @@ export const getRecentSubmissions = (params = {}) =>
     API.get('/admin/dashboard/recent-submissions', { params });
 
 // ============================================
-// ADMIN: MONITORING - ✅ WORKING NOW
+// ADMIN: MONITORING
 // ============================================
 export const getActiveExamSessions = () => API.get('/admin/monitoring/sessions');
 

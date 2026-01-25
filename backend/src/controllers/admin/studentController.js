@@ -1,19 +1,19 @@
-const { run, all } = require('../../utils/db');
+/**
+ * Admin Student Controller
+ * Handles bulk upload, class management operations
+ * 
+ * UPDATED: Uses centralized helpers.js
+ */
+
+const { get, all, run } = require('../../utils/db');
 const { hashPassword } = require('../../services/authService');
 const { parseCsvBuffer } = require('../../services/csvService');
 const { logAudit, ACTIONS } = require('../../services/auditService');
+const { getClientIp, formatFullName, isValidClassLevel } = require('../../utils/helpers');
 
-function getClientIp(req) {
-    return req.headers['x-forwarded-for']?.split(',')[0] ||
-        req.connection.remoteAddress ||
-        req.socket.remoteAddress ||
-        'unknown';
-}
-
-/**
- * ✅ ENHANCED: Import students from Django CSV
- * CSV Format: admission_number,first_name,middle_name,last_name,class_level,password_plain
- */
+// ============================================
+// BULK UPLOAD STUDENTS (Django CSV)
+// ============================================
 async function bulkCreateStudents(req, res) {
     try {
         if (!req.file) {
@@ -28,7 +28,6 @@ async function bulkCreateStudents(req, res) {
             return res.status(400).json({ error: 'No valid students found in CSV file' });
         }
 
-        // Validate CSV format
         const firstStudent = students[0];
         const requiredFields = ['admission_number', 'first_name', 'last_name', 'class_level', 'password_plain'];
         const missingFields = requiredFields.filter(field => !firstStudent[field]);
@@ -57,7 +56,6 @@ async function bulkCreateStudents(req, res) {
                 const classLevel = s.class_level?.trim().toUpperCase();
                 const passwordPlain = s.password_plain?.trim();
 
-                // Validate required fields
                 if (!admissionNumber || !firstName || !lastName || !classLevel || !passwordPlain) {
                     results.failed.push({
                         admission_number: admissionNumber || 'UNKNOWN',
@@ -66,27 +64,23 @@ async function bulkCreateStudents(req, res) {
                     continue;
                 }
 
-                // Validate class level
-                const validClasses = ['JSS1', 'JSS2', 'JSS3', 'SS1', 'SS2', 'SS3'];
-                if (!validClasses.includes(classLevel)) {
+                // Use helper for class validation
+                if (!isValidClassLevel(classLevel)) {
                     results.failed.push({
                         admission_number: admissionNumber,
-                        error: `Invalid class level: ${classLevel}. Must be one of: ${validClasses.join(', ')}`
+                        error: `Invalid class level: ${classLevel}. Must be one of: JSS1, JSS2, JSS3, SS1, SS2, SS3`
                     });
                     continue;
                 }
 
-                // Hash password
                 const passwordHash = await hashPassword(passwordPlain);
 
-                // Check if student already exists
-                const existingStudent = await require('../../utils/db').get(
+                const existingStudent = await get(
                     'SELECT id FROM students WHERE admission_number = ?',
                     [admissionNumber]
                 );
 
                 if (existingStudent) {
-                    // Update existing student
                     await run(`
                         UPDATE students
                         SET first_name = ?,
@@ -107,7 +101,6 @@ async function bulkCreateStudents(req, res) {
 
                     console.log(`✅ Updated: ${admissionNumber} - ${firstName} ${lastName}`);
                 } else {
-                    // Insert new student
                     await run(`
                         INSERT INTO students (admission_number, first_name, middle_name, last_name, class, password_hash)
                         VALUES (?, ?, ?, ?, ?, ?)
@@ -147,7 +140,6 @@ async function bulkCreateStudents(req, res) {
             }
         });
 
-        // Generate formatted text output
         const textOutput = generateStudentSummary(results);
 
         res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -163,9 +155,6 @@ async function bulkCreateStudents(req, res) {
     }
 }
 
-/**
- * Generate formatted text summary of import results
- */
 function generateStudentSummary(results) {
     let text = '';
 
@@ -179,7 +168,6 @@ function generateStudentSummary(results) {
     text += `❌ Failed: ${results.failed.length}\n`;
     text += '============================================================\n\n';
 
-    // Successfully created
     if (results.success.length > 0) {
         text += '✅ SUCCESSFULLY CREATED STUDENTS:\n';
         text += '------------------------------------------------------------\n';
@@ -187,7 +175,7 @@ function generateStudentSummary(results) {
         text += '------------------------------------------------------------\n';
 
         results.success.forEach(s => {
-            const fullName = `${s.first_name} ${s.middle_name ? s.middle_name + ' ' : ''}${s.last_name}`;
+            const fullName = formatFullName(s.first_name, s.middle_name, s.last_name);
             const admPadded = s.admission_number.padEnd(16);
             const namePadded = fullName.padEnd(26);
             text += `${admPadded} ${namePadded} ${s.class}\n`;
@@ -195,7 +183,6 @@ function generateStudentSummary(results) {
         text += '\n';
     }
 
-    // Updated students
     if (results.updated.length > 0) {
         text += '🔄 UPDATED EXISTING STUDENTS:\n';
         text += '------------------------------------------------------------\n';
@@ -203,7 +190,7 @@ function generateStudentSummary(results) {
         text += '------------------------------------------------------------\n';
 
         results.updated.forEach(s => {
-            const fullName = `${s.first_name} ${s.middle_name ? s.middle_name + ' ' : ''}${s.last_name}`;
+            const fullName = formatFullName(s.first_name, s.middle_name, s.last_name);
             const admPadded = s.admission_number.padEnd(16);
             const namePadded = fullName.padEnd(26);
             text += `${admPadded} ${namePadded} ${s.class}\n`;
@@ -211,7 +198,6 @@ function generateStudentSummary(results) {
         text += '\n';
     }
 
-    // Failed entries
     if (results.failed.length > 0) {
         text += '❌ FAILED TO IMPORT:\n';
         text += '------------------------------------------------------------\n';
@@ -228,9 +214,9 @@ function generateStudentSummary(results) {
     return text;
 }
 
-/**
- * Get all classes with student counts
- */
+// ============================================
+// GET ALL CLASSES
+// ============================================
 async function getClasses(req, res) {
     try {
         const rows = await all(`
@@ -258,9 +244,9 @@ async function getClasses(req, res) {
     }
 }
 
-/**
- * Delete all students in a class
- */
+// ============================================
+// DELETE STUDENTS BY CLASS
+// ============================================
 async function deleteStudentsByClass(req, res) {
     try {
         const { class: classLevel } = req.body;
@@ -292,9 +278,9 @@ async function deleteStudentsByClass(req, res) {
     }
 }
 
-/**
- * Export students by class (for verification purposes)
- */
+// ============================================
+// EXPORT STUDENTS BY CLASS
+// ============================================
 async function exportStudentsByClass(req, res) {
     try {
         const { class: classLevel } = req.query;
@@ -324,7 +310,7 @@ async function exportStudentsByClass(req, res) {
         text += '------------------------------------------------------------\n';
 
         students.forEach(s => {
-            const fullName = `${s.first_name} ${s.middle_name ? s.middle_name + ' ' : ''}${s.last_name}`;
+            const fullName = formatFullName(s.first_name, s.middle_name, s.last_name);
             const admPadded = s.admission_number.padEnd(16);
             text += `${admPadded} ${fullName}\n`;
         });

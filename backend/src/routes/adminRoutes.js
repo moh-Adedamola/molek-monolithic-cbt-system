@@ -165,10 +165,10 @@ if (dashboardController) {
 }
 
 // ========================================
-// MONITORING - ✅ FIXED: Use correct function name
+// MONITORING
 // ========================================
 if (monitoringController) {
-    if (monitoringController.getActiveExamSessions) {  // ✅ FIXED: Changed from getActiveSessions
+    if (monitoringController.getActiveExamSessions) {
         router.get('/monitoring/sessions', monitoringController.getActiveExamSessions);
     }
 }

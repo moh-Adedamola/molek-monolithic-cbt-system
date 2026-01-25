@@ -53,7 +53,16 @@ const ExamManagement = () => {
             setLoading(true);
             const response = await getAllExams();
             const examList = response.data?.exams || response.data || [];
-            setExams(examList);
+
+            // ✅ FIXED: Normalize field names - backend returns 'isActive', we need 'is_active'
+            const normalizedExams = examList.map(exam => ({
+                ...exam,
+                is_active: exam.isActive !== undefined ? exam.isActive : exam.is_active,
+                duration_minutes: exam.durationMinutes !== undefined ? exam.durationMinutes : exam.duration_minutes,
+                question_count: exam.questionCount !== undefined ? exam.questionCount : exam.question_count
+            }));
+
+            setExams(normalizedExams);
         } catch (error) {
             showAlert('error', error.message || 'Failed to load exams');
         } finally {
@@ -143,11 +152,18 @@ const ExamManagement = () => {
 
     const handleToggleActive = async (exam) => {
         try {
-            await activateExam(exam.subject, exam.class, !exam.is_active);
-            showAlert('success', `Exam ${exam.is_active ? 'deactivated' : 'activated'} successfully`);
-            loadExams();
+            const newStatus = !exam.is_active;
+            console.log(`🔄 Toggling exam: ${exam.subject} (${exam.class}) to ${newStatus ? 'active' : 'inactive'}`);
+
+            await activateExam(exam.subject, exam.class, newStatus);
+
+            showAlert('success', `Exam ${newStatus ? 'activated' : 'deactivated'} successfully`);
+
+            // ✅ Reload exams to get updated status
+            await loadExams();
         } catch (error) {
-            showAlert('error', error.message || 'Failed to toggle exam status');
+            console.error('Toggle error:', error);
+            showAlert('error', error.response?.data?.error || 'Failed to toggle exam status');
         }
     };
 
@@ -328,7 +344,7 @@ const ExamManagement = () => {
                             </div>
                             <div>
                                 <p className="text-sm text-gray-600">Duration</p>
-                                <p className="font-medium">{examDetails.exam.duration_minutes} minutes</p>
+                                <p className="font-medium">{examDetails.exam.durationMinutes || examDetails.exam.duration_minutes} minutes</p>
                             </div>
                             <div>
                                 <p className="text-sm text-gray-600">Total Questions</p>
@@ -336,8 +352,8 @@ const ExamManagement = () => {
                             </div>
                             <div>
                                 <p className="text-sm text-gray-600">Status</p>
-                                <Badge variant={examDetails.exam.is_active ? 'success' : 'default'}>
-                                    {examDetails.exam.is_active ? 'Active' : 'Inactive'}
+                                <Badge variant={(examDetails.exam.isActive || examDetails.exam.is_active) ? 'success' : 'default'}>
+                                    {(examDetails.exam.isActive || examDetails.exam.is_active) ? 'Active' : 'Inactive'}
                                 </Badge>
                             </div>
                         </div>
@@ -347,13 +363,15 @@ const ExamManagement = () => {
                                 {examDetails.questions.slice(0, 5).map((q, idx) => (
                                     <div key={q.id} className="bg-gray-50 p-3 rounded">
                                         <p className="text-sm font-medium mb-1">Q{idx + 1}: {q.question_text}</p>
-                                        <div className="text-xs text-gray-600 ml-4">
-                                            <p>A: {q.option_a}</p>
-                                            <p>B: {q.option_b}</p>
-                                            <p>C: {q.option_c}</p>
-                                            <p>D: {q.option_d}</p>
-                                            <p className="text-green-600 font-medium">Correct: {q.correct_answer}</p>
-                                        </div>
+                                        {q.question_type === 'mcq' && (
+                                            <div className="text-xs text-gray-600 ml-4">
+                                                <p>A: {q.option_a}</p>
+                                                <p>B: {q.option_b}</p>
+                                                <p>C: {q.option_c}</p>
+                                                <p>D: {q.option_d}</p>
+                                                <p className="text-green-600 font-medium">Correct: {q.correct_answer}</p>
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                                 {examDetails.questions.length > 5 && (

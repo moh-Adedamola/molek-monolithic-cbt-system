@@ -1,572 +1,532 @@
-// frontend/src/pages/student/ExamScreen.jsx
-// ✅ COMPLETE PRODUCTION-READY CODE WITH FULLSCREEN MODE
-
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getExamQuestions, submitExam, saveExamProgress, getSystemSettings } from '../../services/api';
-import { Clock, ArrowLeft, ArrowRight, AlertCircle, CheckCircle, Circle, Loader2, Save, Image as ImageIcon } from 'lucide-react';
+import { getExamQuestions, saveExamProgress, submitExam } from '../../services/api';
 
 export default function ExamScreen() {
     const { subject } = useParams();
     const navigate = useNavigate();
 
-    // Core state
     const [questions, setQuestions] = useState([]);
     const [answers, setAnswers] = useState({});
-    const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-    const [loading, setLoading] = useState(true);
-    const [submitting, setSubmitting] = useState(false);
-    const [timeLeft, setTimeLeft] = useState(null);
-    const [showSubmitDialog, setShowSubmitDialog] = useState(false);
-    const [error, setError] = useState('');
-    const [lastSaved, setLastSaved] = useState(null);
-    const [saving, setSaving] = useState(false);
-    const [settings, setSettings] = useState(null);
+    const [currentQuestion, setCurrentQuestion] = useState(0);
+    const [timeRemaining, setTimeRemaining] = useState(0);
+    const [isLoading, setIsLoading] = useState(true);
+    const [error, setError] = useState(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [exam, setExam] = useState(null);
+    const [submitSuccess, setSubmitSuccess] = useState(false);
 
-    const timerRef = useRef(null);
-    const autoSaveRef = useRef(null);
     const admissionNumber = localStorage.getItem('admissionNumber');
+    const autoSaveInterval = useRef(null);
 
-    // ============================================
-    // ✅ FULLSCREEN MODE - Load Settings
-    // ============================================
-    useEffect(() => {
-        const loadSettings = async () => {
-            try {
-                const res = await getSystemSettings();
-                setSettings(res.data.settings);
-                console.log('⚙️ Settings loaded:', res.data.settings);
-            } catch (error) {
-                console.error('Failed to load settings:', error);
-                setSettings({
-                    autoSubmit: true,
-                    showResults: true,
-                    shuffleQuestions: false
-                });
-            }
-        };
-        loadSettings();
-    }, []);
-
-    // ============================================
-    // Load Exam and Setup
-    // ============================================
+    // Validate session on mount
     useEffect(() => {
         if (!admissionNumber) {
+            alert('Please login first');
             navigate('/');
             return;
         }
 
+        if (!subject) {
+            alert('Invalid exam');
+            navigate('/exam-select');
+            return;
+        }
+    }, [admissionNumber, subject, navigate]);
+
+    // Load exam
+    useEffect(() => {
+        if (!admissionNumber || !subject) return;
         loadExam();
-
-        return () => {
-            if (timerRef.current) clearInterval(timerRef.current);
-            if (autoSaveRef.current) clearInterval(autoSaveRef.current);
-        };
-    }, [subject, admissionNumber, navigate]);
-
-    // ============================================
-    // ✅ FULLSCREEN MODE - Enter when exam loads
-    // ============================================
-    useEffect(() => {
-        const enterFullscreenMode = async () => {
-            if (window.electronAPI && window.electronAPI.startExamMode) {
-                try {
-                    console.log('🔒 Entering fullscreen kiosk mode...');
-                    await window.electronAPI.startExamMode();
-                } catch (error) {
-                    console.error('Failed to enter fullscreen mode:', error);
-                }
-            } else {
-                // Fallback for browser (not Electron)
-                console.log('⚠️  Running in browser - fullscreen mode not available');
-                if (document.documentElement.requestFullscreen) {
-                    document.documentElement.requestFullscreen().catch(err => {
-                        console.warn('Fullscreen request failed:', err);
-                    });
-                }
-            }
-        };
-
-        if (questions.length > 0 && !loading) {
-            enterFullscreenMode();
-        }
-    }, [questions, loading]);
-
-    // ============================================
-    // Auto-Save Setup
-    // ============================================
-    useEffect(() => {
-        if (questions.length > 0 && Object.keys(answers).length > 0) {
-            if (autoSaveRef.current) clearInterval(autoSaveRef.current);
-
-            autoSaveRef.current = setInterval(() => {
-                saveProgress();
-            }, 10000); // Auto-save every 10 seconds
-
-            return () => {
-                if (autoSaveRef.current) clearInterval(autoSaveRef.current);
-            };
-        }
-    }, [answers, questions]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [subject]);
 
     const loadExam = async () => {
         try {
-            setLoading(true);
-            setError('');
+            setIsLoading(true);
+
+            console.log('📥 Loading exam:', subject, 'for', admissionNumber);
 
             const res = await getExamQuestions(subject, admissionNumber);
-            const fetchedQuestions = res.data.questions || [];
 
-            if (fetchedQuestions.length === 0) {
-                setError('No questions available for this exam.');
-                setTimeout(() => navigate('/exam-select'), 2000);
+            // Check if already submitted
+            if (res.data.already_submitted) {
+                setError({
+                    title: 'Exam Already Taken',
+                    message: 'You have already submitted this exam.',
+                    isBlocking: true
+                });
+                setIsLoading(false);
                 return;
             }
 
-            setQuestions(fetchedQuestions);
+            // Get duration properly
+            const duration = res.data.exam.duration_seconds ||
+                (res.data.exam.duration_minutes * 60) ||
+                3600;
 
-            const backendTimeRemaining = res.data.time_remaining;
-            const savedAnswers = res.data.saved_answers || {};
+            // Set questions and exam info
+            setQuestions(res.data.questions);
+            setExam(res.data.exam);
+
+            // Load saved progress
+            if (res.data.saved_progress) {
+                const savedAnswers = res.data.saved_progress.answers || {};
+                const savedTime = res.data.saved_progress.time_remaining;
+
+                setAnswers(savedAnswers);
+                setTimeRemaining(savedTime || duration);
+
+                console.log('📂 Restored progress:', Object.keys(savedAnswers).length, 'answers');
+                console.log('⏱️ Time remaining:', savedTime, 'seconds');
+            } else {
+                setTimeRemaining(duration);
+                setAnswers({});
+            }
 
             console.log('⏱️  Exam loaded:');
-            console.log('   Subject:', subject);
-            console.log('   Time remaining:', backendTimeRemaining, 'seconds');
-            console.log('   Questions:', fetchedQuestions.length);
-            console.log('   Saved answers:', Object.keys(savedAnswers).length);
+            console.log('   Subject:', res.data.exam.subject);
+            console.log('   Time remaining:', duration, 'seconds');
+            console.log('   Questions:', res.data.questions.length, 'MCQ');
 
-            // Log question types
-            const mcqCount = fetchedQuestions.filter(q => q.question_type === 'mcq').length;
-            const theoryCount = fetchedQuestions.length - mcqCount;
-            console.log(`   📊 MCQ: ${mcqCount}, Theory: ${theoryCount}`);
+            setIsLoading(false);
 
-            if (savedAnswers && Object.keys(savedAnswers).length > 0) {
-                setAnswers(savedAnswers);
-                setLastSaved(new Date());
-                console.log(`📝 Restored ${Object.keys(savedAnswers).length} saved answers`);
+            // Try to enter fullscreen
+            try {
+                if (document.documentElement.requestFullscreen) {
+                    await document.documentElement.requestFullscreen();
+                }
+            } catch {
+                console.log('⚠️  Fullscreen requires user interaction');
             }
 
-            if (backendTimeRemaining <= 0) {
-                alert('⏰ Your exam time has expired!');
-                handleSubmit(true);
-                return;
-            }
+        } catch (error) {
+            console.error('❌ Load exam error:', error);
 
-            setTimeLeft(backendTimeRemaining);
-            startTimer(backendTimeRemaining);
-            setLoading(false);
-        } catch (err) {
-            console.error('❌ Load exam error:', err);
-
-            if (err.response?.data?.timeExpired) {
-                setError('Your exam time has expired.');
-                setTimeout(() => navigate('/exam-select'), 2000);
-            } else if (err.response?.data?.error) {
-                setError(err.response.data.error);
-                setTimeout(() => navigate('/exam-select'), 3000);
+            if (error.response?.status === 400 && error.response?.data?.already_submitted) {
+                setError({
+                    title: 'Exam Already Taken',
+                    message: 'You have already submitted this exam.',
+                    isBlocking: true
+                });
             } else {
-                setError('Failed to load exam. Please try again.');
-                setTimeout(() => navigate('/exam-select'), 2000);
+                setError({
+                    title: 'Error',
+                    message: 'Failed to load exam. Please try again.',
+                    isBlocking: true
+                });
             }
+
+            setIsLoading(false);
         }
     };
+
+    // Timer countdown
+    useEffect(() => {
+        if (timeRemaining <= 0 || !exam) return;
+
+        const timer = setInterval(() => {
+            setTimeRemaining(prev => {
+                if (prev <= 1) {
+                    clearInterval(timer);
+                    handleAutoSubmit();
+                    return 0;
+                }
+                return prev - 1;
+            });
+        }, 1000);
+
+        return () => clearInterval(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [timeRemaining, exam]);
+
+    // Auto-save progress every 5 seconds
+    useEffect(() => {
+        if (questions.length === 0) return;
+
+        autoSaveInterval.current = setInterval(() => {
+            saveProgress();
+        }, 5000);
+
+        return () => {
+            if (autoSaveInterval.current) {
+                clearInterval(autoSaveInterval.current);
+            }
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [answers, timeRemaining, questions]);
 
     const saveProgress = async () => {
-        if (Object.keys(answers).length === 0 || submitting) return;
-
         try {
-            setSaving(true);
-            await saveExamProgress({
-                admission_number: admissionNumber,
-                subject,
-                answers
-            });
-            setLastSaved(new Date());
-            console.log(`💾 Auto-saved ${Object.keys(answers).length} answers`);
-        } catch (err) {
-            console.error('❌ Auto-save failed:', err);
-        } finally {
-            setSaving(false);
+            await saveExamProgress(admissionNumber, subject, answers, timeRemaining);
+            console.log('💾 Progress saved');
+        } catch (error) {
+            console.error('❌ Failed to save progress:', error);
         }
     };
 
-    const startTimer = (initialSeconds) => {
-        if (timerRef.current) clearInterval(timerRef.current);
-
-        let seconds = initialSeconds;
-
-        timerRef.current = setInterval(() => {
-            seconds--;
-            setTimeLeft(seconds);
-
-            if (seconds <= 0) {
-                clearInterval(timerRef.current);
-                if (settings?.autoSubmit !== false) {
-                    alert('⏰ Time is up! Your exam will be submitted automatically.');
-                    handleSubmit(true);
-                }
-            }
-        }, 1000);
-    };
-
-    const handleAnswer = (questionId, answer) => {
+    const handleAnswerChange = (questionId, answer) => {
         setAnswers(prev => ({
             ...prev,
             [questionId]: answer
         }));
     };
 
-    const handlePrev = () => {
-        if (currentQuestionIndex > 0) {
-            setCurrentQuestionIndex(currentQuestionIndex - 1);
+    const nextQuestion = () => {
+        if (currentQuestion < questions.length - 1) {
+            setCurrentQuestion(prev => prev + 1);
         }
     };
 
-    const handleNext = () => {
-        if (currentQuestionIndex < questions.length - 1) {
-            setCurrentQuestionIndex(currentQuestionIndex + 1);
+    const previousQuestion = () => {
+        if (currentQuestion > 0) {
+            setCurrentQuestion(prev => prev - 1);
         }
     };
 
-    const handleSubmit = async (isAutoSubmit = false) => {
-        const answeredCount = Object.keys(answers).length;
+    const goToQuestion = (index) => {
+        setCurrentQuestion(index);
+    };
 
-        if (!isAutoSubmit && answeredCount < questions.length) {
-            setShowSubmitDialog(true);
-            return;
+    const getQuestionStatus = (index) => {
+        const questionId = questions[index]?.id;
+        return answers[questionId] ? 'answered' : 'unanswered';
+    };
+
+    const handleAutoSubmit = async () => {
+        console.log('⏰ Time expired - auto submitting');
+        await submitExamHandler(true);
+    };
+
+    const handleSubmit = async () => {
+        const unanswered = questions.length - Object.keys(answers).length;
+
+        if (unanswered > 0) {
+            const confirm = window.confirm(
+                `You have ${unanswered} unanswered question(s). Are you sure you want to submit?`
+            );
+            if (!confirm) return;
+        } else {
+            const confirm = window.confirm('Are you sure you want to submit your exam?');
+            if (!confirm) return;
         }
 
+        await submitExamHandler(false);
+    };
+
+    const submitExamHandler = async (autoSubmitted = false) => {
         try {
-            setSubmitting(true);
+            setIsSubmitting(true);
 
-            const res = await submitExam({
-                admission_number: admissionNumber,
-                subject,
-                answers,
-                is_auto_submit: isAutoSubmit
+            // Clear auto-save interval
+            if (autoSaveInterval.current) {
+                clearInterval(autoSaveInterval.current);
+            }
+
+            const startTime = exam?.duration_minutes ? exam.duration_minutes * 60 : 3600;
+            const timeTaken = startTime - timeRemaining;
+
+            const res = await submitExam(admissionNumber, subject, answers, autoSubmitted, timeTaken);
+
+            console.log('✅ Exam submitted successfully');
+
+            // Exit fullscreen
+            if (document.fullscreenElement) {
+                document.exitFullscreen().catch(() => {});
+            }
+
+            // Show success message (no score)
+            setSubmitSuccess(true);
+
+        } catch (error) {
+            console.error('❌ Submit error:', error);
+            setError({
+                title: 'Submit Failed',
+                message: error.response?.data?.error || 'Failed to submit exam. Please try again.',
+                isBlocking: false
             });
-
-            console.log('✅ Exam submitted:', res.data);
-
-            // ============================================
-            // ✅ EXIT FULLSCREEN MODE after submission
-            // ============================================
-            if (window.electronAPI && window.electronAPI.exitExamMode) {
-                try {
-                    await window.electronAPI.exitExamMode();
-                    console.log('✅ Exited fullscreen mode');
-                } catch (error) {
-                    console.error('Failed to exit fullscreen:', error);
-                }
-            } else {
-                // Exit browser fullscreen
-                if (document.exitFullscreen) {
-                    document.exitFullscreen().catch(err => {
-                        console.warn('Exit fullscreen failed:', err);
-                    });
-                }
-            }
-
-            if (timerRef.current) clearInterval(timerRef.current);
-            if (autoSaveRef.current) clearInterval(autoSaveRef.current);
-
-            if (settings?.showResults !== false) {
-                navigate('/exam-result', {
-                    state: {
-                        score: res.data.score,
-                        totalQuestions: res.data.total_questions,
-                        totalPoints: res.data.total_possible_points,
-                        subject,
-                        autoSubmitted: isAutoSubmit
-                    }
-                });
-            } else {
-                navigate('/exam-select', {
-                    state: {
-                        message: 'Exam submitted successfully!'
-                    }
-                });
-            }
-        } catch (err) {
-            console.error('❌ Submit error:', err);
-            setError(err.response?.data?.error || 'Failed to submit exam');
-            setSubmitting(false);
+            setIsSubmitting(false);
         }
     };
 
     const formatTime = (seconds) => {
-        const hours = Math.floor(seconds / 3600);
-        const minutes = Math.floor((seconds % 3600) / 60);
+        const mins = Math.floor(seconds / 60);
         const secs = seconds % 60;
-        return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     };
 
-    const getTimeSinceSaved = () => {
-        if (!lastSaved) return '';
-        const seconds = Math.floor((new Date() - lastSaved) / 1000);
-        if (seconds < 60) return 'just now';
-        const minutes = Math.floor(seconds / 60);
-        return `${minutes}m ago`;
+    const getTimeColor = () => {
+        if (timeRemaining <= 60) return 'text-red-600';
+        if (timeRemaining <= 300) return 'text-orange-500';
+        return 'text-green-600';
     };
 
-    if (loading) {
+    const handleLogout = () => {
+        localStorage.clear();
+        navigate('/');
+    };
+
+    // Success screen after submission
+    if (submitSuccess) {
         return (
-            <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+            <div className="min-h-screen bg-gradient-to-br from-green-50 via-white to-blue-50 flex items-center justify-center p-4">
+                <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center">
+                    <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                        </svg>
+                    </div>
+                    <h1 className="text-2xl font-bold text-gray-900 mb-2">Exam Submitted!</h1>
+                    <p className="text-gray-600 mb-6">
+                        Your {subject} exam has been submitted successfully. 
+                        Your results will be available from your teacher.
+                    </p>
+                    <button
+                        onClick={handleLogout}
+                        className="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition-colors"
+                    >
+                        Return to Login
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    // Loading state
+    if (isLoading) {
+        return (
+            <div className="min-h-screen bg-gray-100 flex items-center justify-center">
                 <div className="text-center">
-                    <Loader2 className="h-12 w-12 animate-spin text-blue-600 mx-auto mb-4" />
-                    <p className="text-gray-600">Loading exam...</p>
+                    <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-blue-600 mx-auto mb-4"></div>
+                    <p className="text-gray-600">Loading exam questions...</p>
                 </div>
             </div>
         );
     }
 
-    if (error) {
+    // Blocking error state
+    if (error?.isBlocking) {
         return (
-            <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-                <div className="bg-white rounded-xl shadow-lg p-8 max-w-md text-center">
-                    <AlertCircle className="h-16 w-16 text-red-600 mx-auto mb-4" />
-                    <h2 className="text-2xl font-bold text-gray-900 mb-2">Error</h2>
-                    <p className="text-gray-600">{error}</p>
+            <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+                <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8 text-center">
+                    <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                    </div>
+                    <h2 className="text-xl font-bold text-gray-900 mb-2">{error.title}</h2>
+                    <p className="text-gray-600 mb-6">{error.message}</p>
+                    <button
+                        onClick={() => navigate('/exam-select')}
+                        className="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700"
+                    >
+                        Back to Exam Selection
+                    </button>
                 </div>
             </div>
         );
     }
 
-    const currentQuestion = questions[currentQuestionIndex];
+    // No questions state
+    if (questions.length === 0) {
+        return (
+            <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+                <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-8 text-center">
+                    <h2 className="text-xl font-bold text-gray-900 mb-2">No Questions Available</h2>
+                    <p className="text-gray-600 mb-6">This exam has no questions yet. Please contact your administrator.</p>
+                    <button
+                        onClick={() => navigate('/exam-select')}
+                        className="w-full py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700"
+                    >
+                        Back to Exam Selection
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    const currentQ = questions[currentQuestion];
     const answeredCount = Object.keys(answers).length;
-    const progress = (answeredCount / questions.length) * 100;
 
     return (
-        <div className="min-h-screen bg-gray-50">
+        <div className="min-h-screen bg-gray-100">
             {/* Header */}
             <div className="bg-white shadow-md sticky top-0 z-10">
-                <div className="max-w-4xl mx-auto px-4 py-4">
-                    <div className="flex items-center justify-between mb-3">
+                <div className="max-w-7xl mx-auto px-4 py-4">
+                    <div className="flex items-center justify-between">
                         <div>
-                            <h1 className="text-2xl font-bold text-gray-900">{subject}</h1>
+                            <h1 className="text-xl font-bold text-gray-900">{subject}</h1>
                             <p className="text-sm text-gray-600">
-                                Question {currentQuestionIndex + 1} of {questions.length} •
-                                Answered: {answeredCount}/{questions.length}
+                                Question {currentQuestion + 1} of {questions.length}
                             </p>
                         </div>
-
-                        <div className="flex items-center gap-4">
-                            {lastSaved && (
-                                <div className="flex items-center gap-2 text-sm text-gray-600">
-                                    {saving ? (
-                                        <>
-                                            <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-                                            <span>Saving...</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <CheckCircle className="h-4 w-4 text-green-600" />
-                                            <span>Saved {getTimeSinceSaved()}</span>
-                                        </>
-                                    )}
-                                </div>
-                            )}
-
-                            <div className={`flex items-center gap-2 px-4 py-2 rounded-lg ${
-                                timeLeft <= 300 ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
-                            }`}>
-                                <Clock className="h-5 w-5" />
-                                <span className="font-mono font-bold">{formatTime(timeLeft)}</span>
+                        <div className="flex items-center space-x-6">
+                            <div className="text-center">
+                                <p className="text-xs text-gray-500">Time Remaining</p>
+                                <p className={`text-2xl font-bold ${getTimeColor()}`}>
+                                    {formatTime(timeRemaining)}
+                                </p>
                             </div>
-                        </div>
-                    </div>
-
-                    <div className="mt-3 w-full bg-gray-200 rounded-full h-2">
-                        <div
-                            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                            style={{ width: `${progress}%` }}
-                        />
-                    </div>
-                </div>
-            </div>
-
-            {/* Question */}
-            <div className="max-w-4xl mx-auto px-4 py-8">
-                <div className="bg-white rounded-xl shadow-lg p-8">
-                    <div className="mb-6">
-                        <div className="flex items-start gap-3 mb-4">
-                            <span className="flex-shrink-0 w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold">
-                                {currentQuestionIndex + 1}
-                            </span>
-                            <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-2">
-                                    <span className={`px-2 py-1 rounded text-xs font-semibold ${
-                                        currentQuestion.question_type === 'mcq'
-                                            ? 'bg-blue-100 text-blue-700'
-                                            : 'bg-purple-100 text-purple-700'
-                                    }`}>
-                                        {currentQuestion.question_type === 'mcq' ? 'Multiple Choice' : 'Theory'}
-                                    </span>
-                                    <span className="text-sm text-gray-600">
-                                        {currentQuestion.points} {currentQuestion.points === 1 ? 'point' : 'points'}
-                                    </span>
-                                </div>
-                                <p className="text-lg text-gray-900">
-                                    {currentQuestion.question_text}
+                            <div className="text-center">
+                                <p className="text-xs text-gray-500">Answered</p>
+                                <p className="text-lg font-semibold text-green-600">
+                                    {answeredCount}/{questions.length}
                                 </p>
                             </div>
                         </div>
-
-                        {/* Image if exists */}
-                        {currentQuestion.image_url && (
-                            <div className="mt-4 mb-6">
-                                <img
-                                    src={`http://localhost:5000${currentQuestion.image_url}`}
-                                    alt="Question"
-                                    className="max-w-full h-auto rounded-lg border border-gray-200 shadow-sm"
-                                    onError={(e) => {
-                                        e.target.style.display = 'none';
-                                        console.error('Failed to load image:', currentQuestion.image_url);
-                                    }}
-                                />
-                            </div>
-                        )}
-                    </div>
-
-                    {/* ============================================ */}
-                    {/* ✅ ANSWER INTERFACE - Auto-detect MCQ/Theory */}
-                    {/* ============================================ */}
-                    {currentQuestion.question_type === 'mcq' ? (
-                        /* MCQ: Radio Buttons */
-                        <div className="space-y-3">
-                            {['A', 'B', 'C', 'D'].map(option => (
-                                <button
-                                    key={option}
-                                    onClick={() => handleAnswer(currentQuestion.id, option)}
-                                    className={`w-full text-left p-4 rounded-lg border-2 transition-all ${
-                                        answers[currentQuestion.id] === option
-                                            ? 'border-blue-600 bg-blue-50'
-                                            : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    <div className="flex items-center gap-3">
-                                        <span className={`flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center ${
-                                            answers[currentQuestion.id] === option
-                                                ? 'border-blue-600 bg-blue-600'
-                                                : 'border-gray-300'
-                                        }`}>
-                                            {answers[currentQuestion.id] === option && (
-                                                <CheckCircle className="h-4 w-4 text-white" />
-                                            )}
-                                        </span>
-                                        <span className="font-semibold text-gray-700">{option}.</span>
-                                        <span className="text-gray-900">
-                                            {currentQuestion[`option_${option.toLowerCase()}`]}
-                                        </span>
-                                    </div>
-                                </button>
-                            ))}
-                        </div>
-                    ) : (
-                        /* Theory: Textarea */
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                                Your Answer:
-                            </label>
-                            <textarea
-                                value={answers[currentQuestion.id] || ''}
-                                onChange={(e) => handleAnswer(currentQuestion.id, e.target.value)}
-                                placeholder="Type your answer here..."
-                                rows={8}
-                                className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-blue-600 focus:ring-2 focus:ring-blue-200 transition-all"
-                            />
-                            <p className="mt-2 text-sm text-gray-500">
-                                {answers[currentQuestion.id]?.length || 0} characters
-                            </p>
-                        </div>
-                    )}
-
-                    {/* Navigation */}
-                    <div className="flex items-center justify-between mt-8 pt-6 border-t">
-                        <button
-                            onClick={handlePrev}
-                            disabled={currentQuestionIndex === 0}
-                            className="flex items-center gap-2 px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                            <ArrowLeft className="h-4 w-4" />
-                            Previous
-                        </button>
-
-                        <div className="flex gap-3">
-                            {currentQuestionIndex === questions.length - 1 ? (
-                                <button
-                                    onClick={() => handleSubmit(false)}
-                                    disabled={submitting}
-                                    className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 font-semibold"
-                                >
-                                    {submitting ? 'Submitting...' : 'Submit Exam'}
-                                </button>
-                            ) : (
-                                <button
-                                    onClick={handleNext}
-                                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                                >
-                                    Next
-                                    <ArrowRight className="h-4 w-4" />
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                </div>
-
-                {/* Question Navigator */}
-                <div className="mt-6 bg-white rounded-xl shadow-lg p-6">
-                    <h3 className="font-semibold text-gray-900 mb-3">Question Navigator</h3>
-                    <div className="grid grid-cols-10 gap-2">
-                        {questions.map((q, idx) => (
-                            <button
-                                key={q.id}
-                                onClick={() => setCurrentQuestionIndex(idx)}
-                                className={`w-10 h-10 rounded-lg font-semibold ${
-                                    idx === currentQuestionIndex
-                                        ? 'bg-blue-600 text-white'
-                                        : answers[q.id]
-                                            ? 'bg-green-100 text-green-700 border-2 border-green-300'
-                                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                                }`}
-                            >
-                                {idx + 1}
-                            </button>
-                        ))}
                     </div>
                 </div>
             </div>
 
-            {/* Submit Dialog */}
-            {showSubmitDialog && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-xl p-6 max-w-md mx-4">
-                        <div className="flex items-center gap-3 mb-4">
-                            <AlertCircle className="h-6 w-6 text-yellow-600" />
-                            <h3 className="text-lg font-bold">Unanswered Questions</h3>
+            {/* Main Content */}
+            <div className="max-w-7xl mx-auto px-4 py-6">
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                    {/* Question Area */}
+                    <div className="lg:col-span-3">
+                        <div className="bg-white rounded-lg shadow-md p-6">
+                            {/* Question Header */}
+                            <div className="flex items-center justify-between mb-4">
+                                <div className="flex items-center space-x-3">
+                                    <div className="bg-blue-500 text-white w-10 h-10 rounded-full flex items-center justify-center font-bold">
+                                        {currentQuestion + 1}
+                                    </div>
+                                    <span className="text-sm px-3 py-1 bg-gray-100 rounded-full">
+                                        Multiple Choice
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Question Text */}
+                            <div className="mb-6">
+                                <p className="text-lg text-gray-800 leading-relaxed">
+                                    {currentQ.question_text}
+                                </p>
+                                {currentQ.image_url && (
+                                    <img
+                                        src={currentQ.image_url}
+                                        alt="Question"
+                                        className="mt-4 max-w-full rounded-lg"
+                                    />
+                                )}
+                            </div>
+
+                            {/* MCQ Options */}
+                            <div className="space-y-3">
+                                {['A', 'B', 'C', 'D'].map(option => {
+                                    const optionKey = `option_${option.toLowerCase()}`;
+                                    const optionText = currentQ[optionKey];
+
+                                    if (!optionText) return null;
+
+                                    const isSelected = answers[currentQ.id] === option;
+
+                                    return (
+                                        <label
+                                            key={option}
+                                            className={`flex items-start p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                                                isSelected
+                                                    ? 'border-blue-500 bg-blue-50'
+                                                    : 'border-gray-200 hover:border-blue-300'
+                                            }`}
+                                        >
+                                            <input
+                                                type="radio"
+                                                name={`question-${currentQ.id}`}
+                                                value={option}
+                                                checked={isSelected}
+                                                onChange={(e) => handleAnswerChange(currentQ.id, e.target.value)}
+                                                className="mt-1 mr-3"
+                                            />
+                                            <div className="flex-1">
+                                                <span className="font-semibold text-gray-700">{option}.</span>
+                                                <span className="ml-2 text-gray-800">{optionText}</span>
+                                            </div>
+                                        </label>
+                                    );
+                                })}
+                            </div>
+
+                            {/* Navigation Buttons */}
+                            <div className="flex items-center justify-between mt-6 pt-6 border-t">
+                                <button
+                                    onClick={previousQuestion}
+                                    disabled={currentQuestion === 0}
+                                    className="px-6 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    ← Previous
+                                </button>
+
+                                <button
+                                    onClick={nextQuestion}
+                                    disabled={currentQuestion === questions.length - 1}
+                                    className="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    Next →
+                                </button>
+                            </div>
                         </div>
-                        <p className="text-gray-600 mb-6">
-                            You have {questions.length - answeredCount} unanswered question(s).
-                            Are you sure you want to submit?
-                        </p>
-                        <div className="flex gap-3">
+                    </div>
+
+                    {/* Question Navigator */}
+                    <div className="lg:col-span-1">
+                        <div className="bg-white rounded-lg shadow-md p-4 sticky top-24">
+                            <h3 className="font-bold text-gray-800 mb-4">Question Navigator</h3>
+
+                            <div className="grid grid-cols-5 gap-2 mb-4">
+                                {questions.map((q, index) => {
+                                    const status = getQuestionStatus(index);
+                                    return (
+                                        <button
+                                            key={q.id}
+                                            onClick={() => goToQuestion(index)}
+                                            className={`w-10 h-10 rounded-lg font-medium transition-all ${
+                                                index === currentQuestion
+                                                    ? 'bg-blue-500 text-white ring-2 ring-blue-300'
+                                                    : status === 'answered'
+                                                        ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                                                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                            }`}
+                                        >
+                                            {index + 1}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+
+                            <div className="space-y-2 text-sm mb-4">
+                                <div className="flex items-center">
+                                    <div className="w-4 h-4 bg-green-100 rounded mr-2"></div>
+                                    <span>Answered ({answeredCount})</span>
+                                </div>
+                                <div className="flex items-center">
+                                    <div className="w-4 h-4 bg-gray-100 rounded mr-2"></div>
+                                    <span>Unanswered ({questions.length - answeredCount})</span>
+                                </div>
+                            </div>
+
                             <button
-                                onClick={() => setShowSubmitDialog(false)}
-                                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                                onClick={handleSubmit}
+                                disabled={isSubmitting}
+                                className="w-full py-3 bg-green-500 text-white rounded-lg font-bold hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                                Go Back
-                            </button>
-                            <button
-                                onClick={() => {
-                                    setShowSubmitDialog(false);
-                                    handleSubmit(false);
-                                }}
-                                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                            >
-                                Submit Anyway
+                                {isSubmitting ? 'Submitting...' : 'Submit Exam'}
                             </button>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            {/* Non-blocking error toast */}
+            {error && !error.isBlocking && (
+                <div className="fixed bottom-4 right-4 bg-red-500 text-white px-6 py-4 rounded-lg shadow-lg max-w-md">
+                    <p className="font-bold">{error.title}</p>
+                    <p className="text-sm">{error.message}</p>
+                    <button
+                        onClick={() => setError(null)}
+                        className="mt-2 text-xs underline"
+                    >
+                        Dismiss
+                    </button>
                 </div>
             )}
         </div>

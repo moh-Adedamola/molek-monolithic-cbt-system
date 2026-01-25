@@ -18,6 +18,9 @@ async function getStats(req, res) {
         // Total submissions
         const submissionsCount = await get('SELECT COUNT(*) as count FROM submissions');
 
+        // Total unique subjects
+        const subjectsCount = await get('SELECT COUNT(DISTINCT subject) as count FROM exams');
+
         // Recent submissions (last 7 days)
         const recentSubmissions = await get(`
             SELECT COUNT(*) as count 
@@ -56,6 +59,7 @@ async function getStats(req, res) {
                 totalExams: examsCount.count,
                 activeExams: activeExamsCount.count,
                 totalSubmissions: submissionsCount.count,
+                totalSubjects: subjectsCount.count,
                 recentSubmissions: recentSubmissions.count,
                 averageScore: avgScore.avg ? Math.round(avgScore.avg) : 0,
                 studentsByClass: studentsByClass

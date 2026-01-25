@@ -1,10 +1,10 @@
 /**
- * Enhanced Question Management Controller
- *
- * NEW FEATURES:
- * ✅ Image upload support for questions
- * ✅ Theory/Essay question support
- * ✅ Mixed question types (MCQ + Theory)
+ * Question Management Controller (MCQ ONLY)
+ * 
+ * SIMPLIFIED:
+ * - Only MCQ questions (no theory/essay)
+ * - All questions = 1 point each
+ * - No points field in CSV
  */
 
 const { run, get, all } = require('../../utils/db');
@@ -14,7 +14,7 @@ const path = require('path');
 const fs = require('fs-extra');
 const crypto = require('crypto');
 
-// ✅ Image storage directory
+// Image storage directory
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads', 'questions');
 
 // Ensure uploads directory exists
@@ -28,19 +28,16 @@ function getClientIp(req) {
 }
 
 /**
- * ✅ NEW: Save uploaded image and return filename
+ * Save uploaded image and return filename
  */
 async function saveQuestionImage(file) {
     try {
-        // Generate unique filename
         const timestamp = Date.now();
         const randomString = crypto.randomBytes(8).toString('hex');
         const extension = path.extname(file.originalname);
         const filename = `question_${timestamp}_${randomString}${extension}`;
 
         const filepath = path.join(UPLOADS_DIR, filename);
-
-        // Save file
         await fs.writeFile(filepath, file.buffer);
 
         console.log(`✅ Image saved: ${filename}`);
@@ -52,8 +49,8 @@ async function saveQuestionImage(file) {
 }
 
 /**
- * ✅ NEW: Upload questions with IMAGE support
- * Supports both CSV (for bulk) and single question with image
+ * Upload questions from CSV (MCQ only)
+ * CSV Format: question_text,option_a,option_b,option_c,option_d,correct_answer
  */
 async function uploadQuestions(req, res) {
     try {
@@ -64,7 +61,7 @@ async function uploadQuestions(req, res) {
             return await uploadSingleQuestion(req, res);
         }
 
-        // Original CSV bulk upload (unchanged for backward compatibility)
+        // CSV bulk upload
         if (!req.file) {
             return res.status(400).json({ error: 'No file uploaded' });
         }
@@ -85,8 +82,9 @@ async function uploadQuestions(req, res) {
             return res.status(400).json({ error: 'No valid questions found in CSV file' });
         }
 
+        // Validate CSV format
         const firstQuestion = questions[0];
-        const requiredFields = ['question_text', 'question_type'];
+        const requiredFields = ['question_text', 'option_a', 'option_b', 'option_c', 'option_d', 'correct_answer'];
         const missingFields = requiredFields.filter(field => !firstQuestion[field]);
 
         if (missingFields.length > 0) {
@@ -94,10 +92,11 @@ async function uploadQuestions(req, res) {
                 error: 'Invalid CSV format',
                 missing_fields: missingFields,
                 required_fields: requiredFields,
-                sample: 'question_text,question_type,option_a,option_b,option_c,option_d,correct_answer,points'
+                sample: 'question_text,option_a,option_b,option_c,option_d,correct_answer'
             });
         }
 
+        // Get or create exam
         const existingExam = await get(
             'SELECT id FROM exams WHERE subject = ? AND class = ?',
             [subject, classLevel]
@@ -107,6 +106,7 @@ async function uploadQuestions(req, res) {
 
         if (existingExam) {
             examId = existingExam.id;
+            // Delete existing questions for this exam
             await run('DELETE FROM questions WHERE exam_id = ?', [examId]);
         } else {
             const result = await run(
@@ -116,50 +116,35 @@ async function uploadQuestions(req, res) {
             examId = result.lastID;
         }
 
+        // Insert questions (all MCQ, all 1 point)
         let insertedCount = 0;
         for (const q of questions) {
             try {
-                const questionType = (q.question_type || 'mcq').toLowerCase();
-                const points = parseInt(q.points) || (questionType === 'mcq' ? 1 : 5);
-
-                if (questionType === 'mcq') {
-                    // Multiple choice question
-                    await run(`
-                        INSERT INTO questions (
-                            exam_id, question_text, question_type, option_a, option_b, 
-                            option_c, option_d, correct_answer, points, image_url
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    `, [
-                        examId,
-                        q.question_text,
-                        'mcq',
-                        q.option_a,
-                        q.option_b,
-                        q.option_c,
-                        q.option_d,
-                        q.correct_answer?.toUpperCase(),
-                        points,
-                        null
-                    ]);
-                } else {
-                    // Theory/Essay question
-                    await run(`
-                        INSERT INTO questions (
-                            exam_id, question_text, question_type, option_a, option_b, 
-                            option_c, option_d, correct_answer, points, image_url
-                        )
-                        VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, NULL)
-                    `, [
-                        examId,
-                        q.question_text,
-                        questionType,
-                        points
-                    ]);
+                // Validate correct answer
+                const correctAnswer = (q.correct_answer || '').toUpperCase().trim();
+                if (!['A', 'B', 'C', 'D'].includes(correctAnswer)) {
+                    console.warn(`⚠️  Skipping question with invalid correct_answer: "${q.correct_answer}"`);
+                    continue;
                 }
+
+                await run(`
+                    INSERT INTO questions (
+                        exam_id, question_text, option_a, option_b, 
+                        option_c, option_d, correct_answer
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                `, [
+                    examId,
+                    q.question_text,
+                    q.option_a,
+                    q.option_b,
+                    q.option_c,
+                    q.option_d,
+                    correctAnswer
+                ]);
                 insertedCount++;
             } catch (err) {
-                console.error('Failed to insert question:', err);
+                console.error('Failed to insert question:', err.message);
             }
         }
 
@@ -167,7 +152,7 @@ async function uploadQuestions(req, res) {
             action: ACTIONS.QUESTIONS_UPLOADED,
             userType: 'admin',
             userIdentifier: 'admin',
-            details: `Uploaded ${insertedCount} questions for ${subject} (${classLevel})`,
+            details: `Uploaded ${insertedCount} MCQ questions for ${subject} (${classLevel})`,
             ipAddress: getClientIp(req),
             status: 'success',
             metadata: {
@@ -206,7 +191,7 @@ async function uploadQuestions(req, res) {
 }
 
 /**
- * ✅ NEW: Upload single question with image
+ * Upload single MCQ question with optional image
  */
 async function uploadSingleQuestion(req, res) {
     try {
@@ -214,26 +199,30 @@ async function uploadSingleQuestion(req, res) {
             subject,
             class: classLevel,
             question_text,
-            question_type,
             option_a,
             option_b,
             option_c,
             option_d,
-            correct_answer,
-            points
+            correct_answer
         } = req.body;
 
-        if (!subject || !classLevel || !question_text || !question_type) {
+        if (!subject || !classLevel || !question_text) {
             return res.status(400).json({
-                error: 'Subject, class, question_text, and question_type are required'
+                error: 'Subject, class, and question_text are required'
             });
         }
 
-        // Validate question type
-        const validTypes = ['mcq', 'theory', 'essay', 'short_answer'];
-        if (!validTypes.includes(question_type.toLowerCase())) {
+        // Validate MCQ fields
+        if (!option_a || !option_b || !option_c || !option_d || !correct_answer) {
             return res.status(400).json({
-                error: `Invalid question_type. Must be one of: ${validTypes.join(', ')}`
+                error: 'All options (A, B, C, D) and correct_answer are required'
+            });
+        }
+
+        const correctAnswerUpper = correct_answer.toUpperCase().trim();
+        if (!['A', 'B', 'C', 'D'].includes(correctAnswerUpper)) {
+            return res.status(400).json({
+                error: 'correct_answer must be A, B, C, or D'
             });
         }
 
@@ -251,70 +240,40 @@ async function uploadSingleQuestion(req, res) {
             exam = { id: result.lastID };
         }
 
-        // Handle image upload if present
+        // Handle image upload
         let imageFilename = null;
         if (req.file) {
             imageFilename = await saveQuestionImage(req.file);
         }
 
-        // Calculate points (default: MCQ=1, Theory=5)
-        const questionPoints = parseInt(points) || (question_type === 'mcq' ? 1 : 5);
-
         // Insert question
-        if (question_type === 'mcq') {
-            // Validate MCQ fields
-            if (!option_a || !option_b || !option_c || !option_d || !correct_answer) {
-                return res.status(400).json({
-                    error: 'MCQ questions require all options (A, B, C, D) and correct_answer'
-                });
-            }
-
-            await run(`
-                INSERT INTO questions (
-                    exam_id, question_text, question_type, option_a, option_b, 
-                    option_c, option_d, correct_answer, points, image_url
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `, [
-                exam.id,
-                question_text,
-                'mcq',
-                option_a,
-                option_b,
-                option_c,
-                option_d,
-                correct_answer.toUpperCase(),
-                questionPoints,
-                imageFilename
-            ]);
-        } else {
-            // Theory/Essay question
-            await run(`
-                INSERT INTO questions (
-                    exam_id, question_text, question_type, option_a, option_b, 
-                    option_c, option_d, correct_answer, points, image_url
-                )
-                VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?)
-            `, [
-                exam.id,
-                question_text,
-                question_type,
-                questionPoints,
-                imageFilename
-            ]);
-        }
+        await run(`
+            INSERT INTO questions (
+                exam_id, question_text, option_a, option_b, 
+                option_c, option_d, correct_answer, image_url
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+            exam.id,
+            question_text,
+            option_a,
+            option_b,
+            option_c,
+            option_d,
+            correctAnswerUpper,
+            imageFilename
+        ]);
 
         await logAudit({
             action: ACTIONS.QUESTIONS_UPLOADED,
             userType: 'admin',
             userIdentifier: 'admin',
-            details: `Added single ${question_type} question for ${subject} (${classLevel})${imageFilename ? ' with image' : ''}`,
+            details: `Added single MCQ question for ${subject} (${classLevel})${imageFilename ? ' with image' : ''}`,
             ipAddress: getClientIp(req),
             status: 'success',
             metadata: {
                 subject,
                 class: classLevel,
-                questionType: question_type,
                 hasImage: !!imageFilename,
                 examId: exam.id
             }
@@ -322,7 +281,7 @@ async function uploadSingleQuestion(req, res) {
 
         res.json({
             success: true,
-            message: `Question added successfully`,
+            message: 'Question added successfully',
             examId: exam.id,
             hasImage: !!imageFilename,
             imageUrl: imageFilename ? `/uploads/questions/${imageFilename}` : null
@@ -338,7 +297,7 @@ async function uploadSingleQuestion(req, res) {
 }
 
 /**
- * ✅ ENHANCED: Get all questions (now includes images and question types)
+ * Get all questions
  */
 async function getAllQuestions(req, res) {
     try {
@@ -364,13 +323,12 @@ async function getAllQuestions(req, res) {
 }
 
 /**
- * ✅ NEW: Delete question (and its image if exists)
+ * Delete question (and its image if exists)
  */
 async function deleteQuestion(req, res) {
     try {
         const { id } = req.params;
 
-        // Get question details first
         const question = await get('SELECT * FROM questions WHERE id = ?', [id]);
 
         if (!question) {
@@ -386,7 +344,6 @@ async function deleteQuestion(req, res) {
             }
         }
 
-        // Delete question from database
         await run('DELETE FROM questions WHERE id = ?', [id]);
 
         await logAudit({
@@ -410,20 +367,18 @@ async function deleteQuestion(req, res) {
 }
 
 /**
- * ✅ NEW: Update question (including image)
+ * Update question (including image)
  */
 async function updateQuestion(req, res) {
     try {
         const { id } = req.params;
         const {
             question_text,
-            question_type,
             option_a,
             option_b,
             option_c,
             option_d,
-            correct_answer,
-            points
+            correct_answer
         } = req.body;
 
         const question = await get('SELECT * FROM questions WHERE id = ?', [id]);
@@ -451,24 +406,20 @@ async function updateQuestion(req, res) {
         await run(`
             UPDATE questions 
             SET question_text = ?,
-                question_type = ?,
                 option_a = ?,
                 option_b = ?,
                 option_c = ?,
                 option_d = ?,
                 correct_answer = ?,
-                points = ?,
                 image_url = ?
             WHERE id = ?
         `, [
             question_text || question.question_text,
-            question_type || question.question_type,
             option_a || question.option_a,
             option_b || question.option_b,
             option_c || question.option_c,
             option_d || question.option_d,
             correct_answer ? correct_answer.toUpperCase() : question.correct_answer,
-            points || question.points,
             imageFilename,
             id
         ]);

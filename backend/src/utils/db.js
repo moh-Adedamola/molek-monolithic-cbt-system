@@ -82,7 +82,7 @@ function all(sql, params = []) {
 }
 
 // ============================================
-// SCHEMA INITIALIZATION
+// SCHEMA INITIALIZATION (MCQ ONLY - NO THEORY)
 // ============================================
 async function initializeDatabase() {
     console.log('🔧 Initializing database schema...');
@@ -90,7 +90,6 @@ async function initializeDatabase() {
     try {
         // ========================================
         // STUDENTS TABLE
-        // ✅ CHANGED: Uses admission_number instead of exam_code
         // ========================================
         await run(`
             CREATE TABLE IF NOT EXISTS students (
@@ -123,37 +122,25 @@ async function initializeDatabase() {
         console.log('✅ Table: exams');
 
         // ========================================
-        // QUESTIONS TABLE
-        // ✅ ENHANCED: Added theory_answer, question_type, image_url, points
+        // QUESTIONS TABLE (MCQ ONLY - NO THEORY)
+        // All questions = 1 point each
         // ========================================
         await run(`
             CREATE TABLE IF NOT EXISTS questions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 exam_id INTEGER NOT NULL,
                 question_text TEXT NOT NULL,
-                question_type TEXT DEFAULT 'mcq',
                 option_a TEXT,
                 option_b TEXT,
                 option_c TEXT,
                 option_d TEXT,
                 correct_answer TEXT,
-                theory_answer TEXT,
-                points INTEGER DEFAULT 1,
                 image_url TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (exam_id) REFERENCES exams(id) ON DELETE CASCADE
             )
         `);
         console.log('✅ Table: questions');
-
-        // Check if theory_answer column exists (for existing databases)
-        const tableInfo = await all("PRAGMA table_info(questions)");
-        const hasTheoryAnswer = tableInfo.some(col => col.name === 'theory_answer');
-
-        if (!hasTheoryAnswer) {
-            await run('ALTER TABLE questions ADD COLUMN theory_answer TEXT');
-            console.log('✅ Added theory_answer column to questions table');
-        }
 
         // ========================================
         // EXAM SESSIONS TABLE
@@ -175,20 +162,19 @@ async function initializeDatabase() {
         console.log('✅ Table: exam_sessions');
 
         // ========================================
-        // SUBMISSIONS TABLE
-        // ✅ ENHANCED: Added theory_pending, theory_scores, auto_submitted
+        // SUBMISSIONS TABLE (SIMPLIFIED - NO THEORY)
+        // score = number of correct answers
+        // total_questions = total MCQ questions
         // ========================================
         await run(`
             CREATE TABLE IF NOT EXISTS submissions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 student_id INTEGER NOT NULL,
                 subject TEXT NOT NULL,
+                class TEXT NOT NULL,
                 answers TEXT NOT NULL,
                 score INTEGER NOT NULL,
                 total_questions INTEGER NOT NULL,
-                total_possible_points INTEGER,
-                theory_pending INTEGER DEFAULT 0,
-                theory_scores TEXT,
                 auto_submitted INTEGER DEFAULT 0,
                 submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE,
@@ -197,33 +183,16 @@ async function initializeDatabase() {
         `);
         console.log('✅ Table: submissions');
 
-        // Check for new columns in submissions
+        // Check for class column in submissions (for older databases)
         const submissionsInfo = await all("PRAGMA table_info(submissions)");
-        const hasTheoryPending = submissionsInfo.some(col => col.name === 'theory_pending');
-        const hasTheoryScores = submissionsInfo.some(col => col.name === 'theory_scores');
-        const hasAutoSubmitted = submissionsInfo.some(col => col.name === 'auto_submitted');
-        const hasTotalPossiblePoints = submissionsInfo.some(col => col.name === 'total_possible_points');
-
-        if (!hasTheoryPending) {
-            await run('ALTER TABLE submissions ADD COLUMN theory_pending INTEGER DEFAULT 0');
-            console.log('✅ Added theory_pending column');
-        }
-        if (!hasTheoryScores) {
-            await run('ALTER TABLE submissions ADD COLUMN theory_scores TEXT');
-            console.log('✅ Added theory_scores column');
-        }
-        if (!hasAutoSubmitted) {
-            await run('ALTER TABLE submissions ADD COLUMN auto_submitted INTEGER DEFAULT 0');
-            console.log('✅ Added auto_submitted column');
-        }
-        if (!hasTotalPossiblePoints) {
-            await run('ALTER TABLE submissions ADD COLUMN total_possible_points INTEGER');
-            console.log('✅ Added total_possible_points column');
+        const hasClass = submissionsInfo.some(col => col.name === 'class');
+        if (!hasClass) {
+            await run('ALTER TABLE submissions ADD COLUMN class TEXT');
+            console.log('✅ Added class column to submissions');
         }
 
         // ========================================
         // SETTINGS TABLE
-        // System configuration
         // ========================================
         await run(`
             CREATE TABLE IF NOT EXISTS settings (
@@ -254,7 +223,6 @@ async function initializeDatabase() {
 
         // ========================================
         // AUDIT LOGS TABLE
-        // Track all system activities
         // ========================================
         await run(`
             CREATE TABLE IF NOT EXISTS audit_logs (
@@ -314,9 +282,24 @@ process.on('SIGINT', () => {
     });
 });
 
+// ============================================
+// HELPER FUNCTIONS FOR OTHER SERVICES
+// ============================================
+
+function getDb() {
+    return db;
+}
+
+function getDatabasePath() {
+    return DB_PATH;
+}
+
 module.exports = {
     db,
     run,
     get,
-    all
+    all,
+    getDb,
+    getDatabasePath,
+    DB_PATH
 };
