@@ -4,23 +4,6 @@ const { logAudit } = require('../../services/auditService');
 const { getClientIp } = require('../../utils/helpers');
 
 /**
- * Nigerian School Grading Format:
- * - CA1: 15 marks
- * - CA2: 15 marks
- * - OBJ/CBT: 30 marks (THIS IS WHAT CBT EXPORTS)
- * - Theory: 40 marks
- * - Total: 100 marks
- * 
- * Grading Scale:
- * A: 75-100 (Excellent)
- * B: 70-74 (Very Good)
- * C: 60-69 (Good)
- * D: 50-59 (Pass)
- * E: 45-49 (Fair)
- * F: 0-44 (Fail)
- */
-
-/**
  * Get class results with filters
  */
 async function getClassResults(req, res) {
@@ -76,18 +59,12 @@ async function getClassResults(req, res) {
 
         const results = await all(query, params);
 
-        // Calculate OBJ score (raw out of 30) and percentage
-        const resultsWithScores = results.map(r => {
-            // Scale raw score to 30 (OBJ component)
-            const objScore = Math.round((r.score / r.total_questions) * 30);
-            const percentage = Math.round((r.score / r.total_questions) * 100);
-            
-            return {
-                ...r,
-                obj_score: objScore,
-                percentage: percentage
-            };
-        });
+        // Calculate percentage and OBJ score (out of 30)
+        const resultsWithScores = results.map(r => ({
+            ...r,
+            percentage: Math.round((r.score / r.total_questions) * 100),
+            obj_score: Math.round((r.score / r.total_questions) * 30) // Nigerian format: max 30
+        }));
 
         res.json({
             success: true,
@@ -103,17 +80,14 @@ async function getClassResults(req, res) {
 /**
  * Export results to Django-compatible CSV
  * 
- * Nigerian School Format:
- * - CSV Header: admission_number,subject,obj_score,total_questions
- * - obj_score: Raw score scaled to 30 (OBJ component of exam)
- * - total_questions: Number of questions in exam (typically 30)
+ * Nigerian School Grading Format:
+ * - OBJ/CBT Score: Max 30 marks
+ * - Format: admission_number,subject,obj_score,total_questions
  * 
- * Django will:
- * 1. Look up student by admission_number
- * 2. Look up subject by name
- * 3. Auto-pull CA1+CA2 from CAScore table
- * 4. Set obj_score from this CSV
- * 5. Theory score uploaded separately after manual marking
+ * The Django backend will:
+ * 1. Match subject by name
+ * 2. Store obj_score directly (already scaled to 30)
+ * 3. Combine with CA1(15) + CA2(15) + Theory(40) for total
  */
 async function exportResultsToDjango(req, res) {
     try {
@@ -169,15 +143,30 @@ async function exportResultsToDjango(req, res) {
             return res.status(404).json({ error: 'No results found' });
         }
 
-        // CSV Header: admission_number,subject,obj_score,total_questions
-        // This matches Django's import-obj-scores endpoint
+        // =====================================================
+        // NIGERIAN SCHOOL GRADING FORMAT
+        // =====================================================
+        // CSV Header for Django import endpoint:
+        // POST /api/exam-results/import-obj-scores/
+        // 
+        // Score Structure:
+        // - CA1: 15 marks (uploaded separately)
+        // - CA2: 15 marks (uploaded separately)
+        // - OBJ: 30 marks (this export)
+        // - Theory: 40 marks (uploaded separately)
+        // - Total: 100 marks
+        // =====================================================
+        
         let csv = 'admission_number,subject,obj_score,total_questions\n';
 
         results.forEach(r => {
-            // Scale score to 30 (OBJ component)
-            // Formula: (raw_score / total_questions) * 30
+            // Scale score to 30 marks (Nigerian OBJ component)
+            // Formula: (correct_answers / total_questions) * 30
             const objScore = Math.round((r.score / r.total_questions) * 30);
+            
+            // Escape subject name if it contains comma
             const subjectEscaped = r.subject.includes(',') ? `"${r.subject}"` : r.subject;
+            
             csv += `${r.admission_number},${subjectEscaped},${objScore},${r.total_questions}\n`;
         });
 
@@ -202,6 +191,7 @@ async function exportResultsToDjango(req, res) {
 
 /**
  * Export results as text report
+ * Uses Nigerian grading scale: A(75+), B(70-74), C(60-69), D(50-59), E(45-49), F(<45)
  */
 async function exportClassResultsAsText(req, res) {
     try {
@@ -222,50 +212,75 @@ async function exportClassResultsAsText(req, res) {
             ORDER BY sub.score DESC
         `, [classLevel, subject]);
 
-        let text = '='.repeat(70) + '\n';
-        text += '                    CBT EXAM RESULTS REPORT\n';
-        text += '                    (OBJ Component - 30 marks)\n';
-        text += '='.repeat(70) + '\n';
+        // Nigerian grading function
+        const getGrade = (pct) => {
+            if (pct >= 75) return 'A';
+            if (pct >= 70) return 'B';
+            if (pct >= 60) return 'C';
+            if (pct >= 50) return 'D';
+            if (pct >= 45) return 'E';
+            return 'F';
+        };
+
+        const getRemark = (pct) => {
+            if (pct >= 75) return 'Excellent';
+            if (pct >= 70) return 'Very Good';
+            if (pct >= 60) return 'Good';
+            if (pct >= 50) return 'Pass';
+            if (pct >= 45) return 'Fair';
+            return 'Fail';
+        };
+
+        let text = '='.repeat(60) + '\n';
+        text += '              CBT EXAM RESULTS REPORT\n';
+        text += '           (Nigerian School Format)\n';
+        text += '='.repeat(60) + '\n';
         text += `School: ${settings.schoolName}\n`;
         text += `Class: ${classLevel} | Subject: ${subject}\n`;
         text += `Generated: ${new Date().toLocaleString()}\n`;
-        text += '='.repeat(70) + '\n\n';
-        text += 'Nigerian Grading: A(75+) B(70-74) C(60-69) D(50-59) E(45-49) F(<45)\n\n';
+        text += '-'.repeat(60) + '\n';
+        text += 'Grading: A(75+) B(70-74) C(60-69) D(50-59) E(45-49) F(<45)\n';
+        text += '='.repeat(60) + '\n\n';
 
         if (results.length === 0) {
             text += 'No results found.\n';
         } else {
-            text += 'Rank | Name                           | Adm No        | Raw  | OBJ/30 | %   | Grade\n';
-            text += '-'.repeat(90) + '\n';
+            // Statistics
+            const scores = results.map(r => Math.round((r.score / r.total_questions) * 100));
+            const avgScore = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+            const highestScore = Math.max(...scores);
+            const lowestScore = Math.min(...scores);
+            const passCount = scores.filter(s => s >= 45).length;
+
+            text += `SUMMARY:\n`;
+            text += `Total Students: ${results.length}\n`;
+            text += `Passed (≥45%): ${passCount} | Failed: ${results.length - passCount}\n`;
+            text += `Average: ${avgScore}% | Highest: ${highestScore}% | Lowest: ${lowestScore}%\n`;
+            text += '-'.repeat(60) + '\n\n';
+
+            text += 'RESULTS:\n';
+            text += '-'.repeat(60) + '\n';
             
             results.forEach((r, i) => {
-                const name = `${r.first_name} ${r.middle_name || ''} ${r.last_name}`.trim().padEnd(30);
-                const admNo = r.admission_number.padEnd(13);
-                const rawScore = `${r.score}/${r.total_questions}`.padStart(5);
-                const objScore = Math.round((r.score / r.total_questions) * 30);
+                const name = `${r.first_name} ${r.middle_name || ''} ${r.last_name}`.trim();
                 const pct = Math.round((r.score / r.total_questions) * 100);
+                const objScore = Math.round((r.score / r.total_questions) * 30);
+                const grade = getGrade(pct);
+                const remark = getRemark(pct);
                 
-                // Nigerian grading scale
-                let grade;
-                if (pct >= 75) grade = 'A';
-                else if (pct >= 70) grade = 'B';
-                else if (pct >= 60) grade = 'C';
-                else if (pct >= 50) grade = 'D';
-                else if (pct >= 45) grade = 'E';
-                else grade = 'F';
-                
-                text += `${String(i + 1).padStart(4)} | ${name} | ${admNo} | ${rawScore} | ${String(objScore).padStart(6)} | ${String(pct).padStart(3)}% | ${grade}\n`;
+                text += `${String(i + 1).padStart(2)}. ${name}\n`;
+                text += `    Adm No: ${r.admission_number}\n`;
+                text += `    Raw: ${r.score}/${r.total_questions} | OBJ Score: ${objScore}/30 | ${pct}%\n`;
+                text += `    Grade: ${grade} (${remark})\n`;
+                if (r.auto_submitted) {
+                    text += `    ⚠️ Auto-submitted (time expired)\n`;
+                }
+                text += '\n';
             });
-            
-            text += '\n' + '='.repeat(70) + '\n';
-            text += `Total Students: ${results.length}\n`;
-            
-            const avgPct = Math.round(results.reduce((sum, r) => sum + (r.score / r.total_questions) * 100, 0) / results.length);
-            text += `Class Average: ${avgPct}%\n`;
-            
-            const passed = results.filter(r => (r.score / r.total_questions) * 100 >= 45).length;
-            text += `Pass Rate (≥45%): ${Math.round((passed / results.length) * 100)}% (${passed}/${results.length})\n`;
         }
+
+        text += '='.repeat(60) + '\n';
+        text += 'END OF REPORT\n';
 
         res.setHeader('Content-Type', 'text/plain');
         res.setHeader('Content-Disposition', `attachment; filename="${classLevel}_${subject}_report.txt"`);
@@ -294,16 +309,15 @@ async function getSubmissionDetails(req, res) {
             return res.status(404).json({ error: 'Submission not found' });
         }
 
-        // Calculate OBJ score (out of 30)
-        const objScore = Math.round((submission.score / submission.total_questions) * 30);
         const percentage = Math.round((submission.score / submission.total_questions) * 100);
 
         res.json({
             success: true,
             submission: {
                 ...submission,
-                obj_score: objScore,
-                percentage: percentage
+                percentage,
+                obj_score: Math.round((submission.score / submission.total_questions) * 30),
+                grade: percentage >= 75 ? 'A' : percentage >= 70 ? 'B' : percentage >= 60 ? 'C' : percentage >= 50 ? 'D' : percentage >= 45 ? 'E' : 'F'
             }
         });
     } catch (error) {
