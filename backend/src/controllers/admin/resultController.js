@@ -153,22 +153,22 @@ async function exportResultsToDjango(req, res) {
         // RAW SCORE FORMAT - NO SCALING
         // =====================================================
         // Each question = 1 mark
-        // score = correct answers (raw score)
+        // obj_score = correct answers (raw score)
         // total_questions = max possible marks
         // 
         // Example: 20 questions exam
-        // - Student gets 15 correct → score = 15, total = 20
-        // - Student gets 18 correct → score = 18, total = 20
+        // - Student gets 15 correct → obj_score = 15, total = 20
+        // - Student gets 18 correct → obj_score = 18, total = 20
         // 
         // Django admin imports and assigns to appropriate component
         // (OBJ, CA1, CA2, etc.)
         // =====================================================
         
-        let csv = 'admission_number,subject,score,total_questions\n';
+        let csv = 'admission_number,subject,obj_score,total_questions\n';
 
         results.forEach(r => {
             // RAW SCORE - no scaling
-            // score = number of correct answers
+            // obj_score = number of correct answers
             // total_questions = max possible score
             const subjectEscaped = r.subject.includes(',') ? `"${r.subject}"` : r.subject;
             
