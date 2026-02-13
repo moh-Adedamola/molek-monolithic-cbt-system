@@ -34,6 +34,8 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
 
 // Enable foreign keys
 db.run('PRAGMA foreign_keys = ON');
+db.run('PRAGMA journal_mode = WAL');
+db.run('PRAGMA busy_timeout = 5000');
 
 // ============================================
 // PROMISE WRAPPERS
@@ -189,6 +191,37 @@ async function initializeDatabase() {
         if (!hasClass) {
             await run('ALTER TABLE submissions ADD COLUMN class TEXT');
             console.log('✅ Added class column to submissions');
+        }
+
+        // ========================================
+        // TERM SUPPORT (Bug 4b fix)
+        // Add term column to exams, submissions, exam_sessions
+        // so multiple terms can coexist without DB reset
+        // ========================================
+        const examsInfo = await all("PRAGMA table_info(exams)");
+        const examsHasTerm = examsInfo.some(col => col.name === 'term');
+        if (!examsHasTerm) {
+            await run("ALTER TABLE exams ADD COLUMN term TEXT DEFAULT 'First Term'");
+            console.log('✅ Added term column to exams');
+            // Drop old unique index and create new one with term
+            try {
+                await run('DROP INDEX IF EXISTS idx_exams_subject_class');
+            } catch(e) { /* index may not exist */ }
+            await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_exams_subject_class_term ON exams(subject, class, term)');
+            console.log('✅ Updated exams unique constraint to include term');
+        }
+
+        const sessionsInfo = await all("PRAGMA table_info(exam_sessions)");
+        const sessionsHasTerm = sessionsInfo.some(col => col.name === 'term');
+        if (!sessionsHasTerm) {
+            await run("ALTER TABLE exam_sessions ADD COLUMN term TEXT DEFAULT 'First Term'");
+            console.log('✅ Added term column to exam_sessions');
+        }
+
+        const subsHasTerm = submissionsInfo.some(col => col.name === 'term');
+        if (!subsHasTerm) {
+            await run("ALTER TABLE submissions ADD COLUMN term TEXT DEFAULT 'First Term'");
+            console.log('✅ Added term column to submissions');
         }
 
         // ========================================

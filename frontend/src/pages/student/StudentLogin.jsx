@@ -13,6 +13,7 @@ export default function StudentLogin() {
     });
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const [info, setInfo] = useState(''); // FIX #1: Info message for no-exam scenarios
     const [settings, setSettings] = useState(null);
 
     useEffect(() => {
@@ -40,6 +41,7 @@ export default function StudentLogin() {
             [e.target.name]: e.target.value
         });
         setError('');
+        setInfo('');
     };
 
     const handleSubmit = async (e) => {
@@ -53,6 +55,7 @@ export default function StudentLogin() {
         try {
             setLoading(true);
             setError('');
+            setInfo('');
 
             console.log('🔐 Attempting login:', formData.admission_number);
 
@@ -72,14 +75,24 @@ export default function StudentLogin() {
                 'Student';
             localStorage.setItem('studentName', studentName);
 
+            // FIX #1: Check for no-exams message from backend
+            if (res.data.no_exams_message) {
+                setInfo(res.data.no_exams_message);
+                localStorage.setItem('activeExams', JSON.stringify([]));
+                console.log('ℹ️ No active exams:', res.data.no_exams_message);
+                return; // Don't navigate, show message on login page
+            }
+
             // Store active exams array
             if (res.data.active_exams && Array.isArray(res.data.active_exams)) {
                 localStorage.setItem('activeExams', JSON.stringify(res.data.active_exams));
                 console.log('📦 Stored active exams:', res.data.active_exams.length, 'exam(s)');
             } else {
-                // If no active exams, store empty array
+                // If no active exams, show message instead of navigating
+                setInfo('There are no exams available at the moment. Please contact your administrator.');
                 localStorage.setItem('activeExams', JSON.stringify([]));
                 console.log('⚠️ No active exams available');
+                return;
             }
 
             console.log('✅ Successfully stored in localStorage');
@@ -131,9 +144,23 @@ export default function StudentLogin() {
                         Student Login
                     </h2>
 
+                    {/* FIX #1: Error message */}
                     {error && (
                         <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
                             <p className="text-sm text-red-700">{error}</p>
+                        </div>
+                    )}
+
+                    {/* FIX #1: Info message for no-active-exams */}
+                    {info && (
+                        <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                            <div className="flex items-start gap-3">
+                                <span className="text-amber-500 text-xl">⚠️</span>
+                                <div>
+                                    <p className="text-sm font-semibold text-amber-800 mb-1">No Exams Available</p>
+                                    <p className="text-sm text-amber-700">{info}</p>
+                                </div>
+                            </div>
                         </div>
                     )}
 

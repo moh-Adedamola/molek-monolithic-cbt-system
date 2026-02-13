@@ -173,14 +173,14 @@ class ArchiveService {
      * Export students to CSV
      */
     async exportStudentsCSV(students, filepath) {
-        const headers = ['First Name', 'Middle Name', 'Last Name', 'Class', 'Student ID', 'Exam Code', 'Created At'];
+        const headers = ['First Name', 'Middle Name', 'Last Name', 'Class', 'Student ID', 'Admission Number', 'Created At'];
         const rows = students.map(s => [
             s.first_name,
             s.middle_name || '',
             s.last_name,
             s.class,
             s.student_id || '',
-            s.exam_code,
+            s.admission_number,
             s.created_at
         ]);
 
@@ -198,12 +198,12 @@ class ArchiveService {
     async exportResultsCSV(submissions, filepath) {
         const { all } = require('../utils/db');
 
-        const headers = ['Student Name', 'Class', 'Exam Code', 'Subject', 'Score', 'Total', 'Percentage', 'Submitted At'];
+        const headers = ['Student Name', 'Class', 'Admission Number', 'Subject', 'Score', 'Total', 'Percentage', 'Submitted At'];
 
         const rows = [];
         for (const sub of submissions) {
             const student = await require('../utils/db').get(
-                'SELECT first_name, middle_name, last_name, class, exam_code FROM students WHERE id = ?',
+                'SELECT first_name, middle_name, last_name, class, admission_number FROM students WHERE id = ?',
                 [sub.student_id]
             );
 
@@ -214,7 +214,7 @@ class ArchiveService {
                 rows.push([
                     fullName,
                     student.class,
-                    student.exam_code,
+                    student.admission_number,
                     sub.subject,
                     sub.score,
                     sub.total_questions,
