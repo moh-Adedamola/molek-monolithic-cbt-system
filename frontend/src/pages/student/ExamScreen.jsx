@@ -195,7 +195,25 @@ export default function ExamScreen() {
 
     const handleAutoSubmit = async () => {
         console.log('⏰ Time expired - auto submitting');
-        await submitExamHandler(true);
+        // Try submitting up to 3 times with delays
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+                await submitExamHandler(true);
+                return; // success, stop retrying
+            } catch (err) {
+                console.error(`❌ Auto-submit attempt ${attempt} failed:`, err.message);
+                if (attempt < 3) {
+                    // Wait 1s before retry
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+            }
+        }
+        // All retries failed - show message to student
+        setError({
+            title: 'Auto-Submit Failed',
+            message: 'Time expired but we could not submit your exam. Your answers have been saved. Please contact your teacher - your saved answers will be scored from the server.',
+            isBlocking: true
+        });
     };
 
     const handleSubmit = async () => {
@@ -398,14 +416,15 @@ export default function ExamScreen() {
 
                             {/* Question Text */}
                             <div className="mb-6">
-                                <p className="text-lg text-gray-800 leading-relaxed">
-                                    {currentQ.question_text}
-                                </p>
+                                <p className="text-lg text-gray-800 leading-relaxed"
+                                   dangerouslySetInnerHTML={{ __html: currentQ.question_text }}
+                                />
                                 {currentQ.image_url && (
                                     <img
-                                        src={currentQ.image_url}
+                                        src={currentQ.image_url.startsWith('http') ? currentQ.image_url : `${window.location.origin}${currentQ.image_url}`}
                                         alt="Question"
                                         className="mt-4 max-w-full rounded-lg"
+                                        onError={(e) => { e.target.style.display = 'none'; console.error('Failed to load image:', currentQ.image_url); }}
                                     />
                                 )}
                             </div>
@@ -439,7 +458,7 @@ export default function ExamScreen() {
                                             />
                                             <div className="flex-1">
                                                 <span className="font-semibold text-gray-700">{option}.</span>
-                                                <span className="ml-2 text-gray-800">{optionText}</span>
+                                                <span className="ml-2 text-gray-800" dangerouslySetInnerHTML={{ __html: optionText }} />
                                             </div>
                                         </label>
                                     );

@@ -48,9 +48,10 @@ if (process.env.UPLOADS_PATH) {
 }
 
 // ============================================
-// ✅ NEW: Serve uploaded question images
+// ✅ Serve uploaded question images
+// Path must match questionController's UPLOADS_DIR (process.cwd()/uploads)
 // ============================================
-const uploadsPath = process.env.UPLOADS_PATH || path.join(__dirname, 'uploads');
+const uploadsPath = process.env.UPLOADS_PATH || path.join(process.cwd(), 'uploads');
 app.use('/uploads', express.static(uploadsPath));
 console.log('✅ Static file serving enabled for:', uploadsPath);
 

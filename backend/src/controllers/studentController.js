@@ -378,5 +378,112 @@ module.exports = {
     login,
     getExamQuestions,
     saveExamProgress,
-    submitExam
+    submitExam,
+    scoreFromProgress
 };
+
+/**
+ * Score a student from their saved exam progress (exam_sessions table).
+ * Used by admin when a student's auto-submit failed (power outage, network error).
+ * POST /api/admin/students/score-from-progress
+ * Body: { admission_number, subject }
+ */
+async function scoreFromProgress(req, res) {
+    try {
+        const { admission_number, subject } = req.body;
+
+        if (!admission_number || !subject) {
+            return res.status(400).json({ error: 'admission_number and subject required' });
+        }
+
+        const student = await get(
+            'SELECT * FROM students WHERE admission_number = ?',
+            [admission_number.toUpperCase()]
+        );
+        if (!student) {
+            return res.status(404).json({ error: 'Student not found' });
+        }
+
+        // Check if already submitted
+        const existing = await get(
+            'SELECT id, score, total_questions FROM submissions WHERE student_id = ? AND subject = ?',
+            [student.id, subject]
+        );
+        if (existing) {
+            return res.json({
+                success: true,
+                message: 'Already submitted',
+                score: existing.score,
+                total_questions: existing.total_questions,
+                percentage: Math.round((existing.score / existing.total_questions) * 100)
+            });
+        }
+
+        // Get saved progress
+        const session = await get(
+            'SELECT answers FROM exam_sessions WHERE student_id = ? AND subject = ?',
+            [student.id, subject]
+        );
+        if (!session || !session.answers) {
+            return res.status(404).json({ error: 'No saved progress found for this student/subject' });
+        }
+
+        let savedAnswers;
+        try {
+            savedAnswers = JSON.parse(session.answers);
+        } catch {
+            return res.status(400).json({ error: 'Corrupted saved answers' });
+        }
+
+        const exam = await get(
+            'SELECT id FROM exams WHERE subject = ? AND class = ?',
+            [subject, student.class]
+        );
+        if (!exam) {
+            return res.status(404).json({ error: 'Exam not found' });
+        }
+
+        // Grade from saved answers
+        const questions = await all(
+            'SELECT id, correct_answer FROM questions WHERE exam_id = ?',
+            [exam.id]
+        );
+
+        let score = 0;
+        const gradedAnswers = {};
+        questions.forEach(q => {
+            const studentAnswer = savedAnswers[q.id] || null;
+            const isCorrect = studentAnswer &&
+                studentAnswer.toUpperCase() === q.correct_answer.toUpperCase();
+            if (isCorrect) score++;
+            gradedAnswers[q.id] = {
+                student_answer: studentAnswer,
+                correct_answer: q.correct_answer,
+                is_correct: isCorrect
+            };
+        });
+
+        // Save as submission
+        await run(`
+            INSERT INTO submissions (
+                student_id, subject, class, answers, score,
+                total_questions, auto_submitted
+            ) VALUES (?, ?, ?, ?, ?, ?, 1)
+        `, [student.id, subject, student.class, JSON.stringify(gradedAnswers), score, questions.length]);
+
+        // Clean up session
+        await run('DELETE FROM exam_sessions WHERE student_id = ? AND subject = ?', [student.id, subject]);
+
+        const percentage = Math.round((score / questions.length) * 100);
+        console.log(`✅ Scored from progress: ${admission_number} ${subject} = ${score}/${questions.length} (${percentage}%)`);
+
+        res.json({
+            success: true,
+            message: `Scored from saved progress: ${score}/${questions.length}`,
+            score, total_questions: questions.length, percentage
+        });
+    } catch (error) {
+        console.error('❌ Score from progress error:', error);
+        res.status(500).json({ error: 'Failed to score from progress' });
+    }
+}

@@ -149,14 +149,18 @@ const QuestionBank = () => {
     };
 
     // Download CSV template - MCQ only, no points
+    // UTF-8 BOM ensures Excel opens with correct encoding for Yoruba, Math, Chemistry
     const downloadTemplate = () => {
+        const BOM = '\uFEFF'; // UTF-8 Byte Order Mark - critical for Excel
         const template = `question_text,option_a,option_b,option_c,option_d,correct_answer
 "What is 2 + 2?",3,4,5,6,B
 "What is the capital of Nigeria?",Abuja,Lagos,Kano,Port Harcourt,A
-"Which planet is closest to the sun?",Venus,Mercury,Earth,Mars,B
-"What is H2O?",Salt,Sugar,Water,Oil,C`;
+"Kí ni orúkọ olùdarí orílẹ̀-èdè Nàìjíríà?",Tinubu,Obasanjo,Buhari,Jonathan,A
+"What is the chemical formula for water?","H₂O","NaCl","CO₂","O₂",A
+"Simplify: √(144) + 3²","15","21","18","12",B
+"What is the value of π to 2 decimal places?","3.14","3.41","2.14","3.12",A`;
 
-        const blob = new Blob([template], { type: 'text/csv' });
+        const blob = new Blob([BOM + template], { type: 'text/csv;charset=utf-8' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -326,7 +330,9 @@ const QuestionBank = () => {
                         </code>
                         <p className="text-xs text-blue-700 mt-2">
                             • All questions are worth 1 point each<br />
-                            • correct_answer must be A, B, C, or D
+                            • correct_answer must be A, B, C, or D<br />
+                            • <strong>IMPORTANT:</strong> Save as "CSV UTF-8" in Excel (not plain CSV)<br />
+                            • Supports: Yoruba (ọ, ẹ, ṣ), Math (√, ², ÷, ≤), Chemistry (H₂O, →)
                         </p>
                     </div>
 
