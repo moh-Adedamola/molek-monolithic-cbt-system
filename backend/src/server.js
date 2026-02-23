@@ -32,14 +32,14 @@ if (process.env.UPLOADS_PATH) {
         console.log('✅ Created uploads directory');
     }
 } else {
-    // ✅ NEW: Create default uploads directory
-    const defaultUploadsPath = path.join(__dirname, 'uploads');
+    // Create default uploads directory matching questionController's UPLOADS_DIR
+    const defaultUploadsPath = path.join(process.cwd(), 'uploads');
     if (!fs.existsSync(defaultUploadsPath)) {
         fs.mkdirSync(defaultUploadsPath, { recursive: true });
-        console.log('✅ Created default uploads directory');
+        console.log('✅ Created uploads directory');
     }
 
-    // ✅ NEW: Create questions subdirectory
+    // Create questions subdirectory
     const questionsPath = path.join(defaultUploadsPath, 'questions');
     if (!fs.existsSync(questionsPath)) {
         fs.mkdirSync(questionsPath, { recursive: true });

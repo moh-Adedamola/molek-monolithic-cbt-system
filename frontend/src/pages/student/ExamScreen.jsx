@@ -421,16 +421,17 @@ export default function ExamScreen() {
                                 />
                                 {currentQ.image_url && (
                                     <img
-                                        src={currentQ.image_url.startsWith('http') ? currentQ.image_url : `${window.location.origin}${currentQ.image_url}`}
-                                        alt="Question"
-                                        className="mt-4 max-w-full rounded-lg"
+                                        src={currentQ.image_url}
+                                        alt="Question diagram"
+                                        className="mt-3 rounded-lg border border-gray-200"
+                                        style={{ maxHeight: '220px', maxWidth: '100%', width: 'auto', objectFit: 'contain' }}
                                         onError={(e) => { e.target.style.display = 'none'; console.error('Failed to load image:', currentQ.image_url); }}
                                     />
                                 )}
                             </div>
 
                             {/* MCQ Options */}
-                            <div className="space-y-3">
+                            <div className="space-y-2">
                                 {['A', 'B', 'C', 'D'].map(option => {
                                     const optionKey = `option_${option.toLowerCase()}`;
                                     const optionText = currentQ[optionKey];
@@ -442,7 +443,7 @@ export default function ExamScreen() {
                                     return (
                                         <label
                                             key={option}
-                                            className={`flex items-start p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                                            className={`flex items-start p-3 rounded-lg border-2 cursor-pointer transition-all ${
                                                 isSelected
                                                     ? 'border-blue-500 bg-blue-50'
                                                     : 'border-gray-200 hover:border-blue-300'
